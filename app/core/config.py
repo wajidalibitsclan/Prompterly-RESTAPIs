@@ -1,0 +1,118 @@
+"""
+Core configuration module for AI Coaching Platform
+Handles all environment variables and application settings
+"""
+from typing import List, Optional
+from pydantic_settings import BaseSettings
+from pydantic import AnyHttpUrl, validator
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables"""
+    
+    # Application
+    APP_NAME: str = "AI Coaching Lounges"
+    APP_ENV: str = "development"
+    DEBUG: bool = True
+    API_V1_PREFIX: str = "/api/v1"
+    SECRET_KEY: str
+    
+    # CORS
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    
+    @validator("CORS_ORIGINS", pre=True)
+    def assemble_cors_origins(cls, v: str | List[str]) -> List[str]:
+        if isinstance(v, str) and not v.startswith("["):
+            return [i.strip() for i in v.split(",")]
+        elif isinstance(v, (list, str)):
+            return v
+        raise ValueError(v)
+    
+    # Database
+    DATABASE_URL: str
+    DB_ECHO: bool = False
+    
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_CACHE_TTL: int = 3600
+    
+    # JWT
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    
+    # OAuth - Google
+    GOOGLE_CLIENT_ID: str
+    GOOGLE_CLIENT_SECRET: str
+    GOOGLE_REDIRECT_URI: str
+    
+    # AWS S3 / DigitalOcean Spaces
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
+    AWS_REGION: str = "us-east-1"
+    S3_BUCKET_NAME: str
+    S3_ENDPOINT_URL: Optional[str] = None
+    
+    # Stripe
+    STRIPE_SECRET_KEY: str
+    STRIPE_PUBLISHABLE_KEY: str
+    STRIPE_WEBHOOK_SECRET: str
+    
+    # Klarna
+    KLARNA_API_KEY: Optional[str] = None
+    KLARNA_API_SECRET: Optional[str] = None
+    
+    # AfterPay
+    AFTERPAY_API_KEY: Optional[str] = None
+    AFTERPAY_API_SECRET: Optional[str] = None
+    
+    # OpenAI
+    OPENAI_API_KEY: str
+    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    
+    # Anthropic
+    ANTHROPIC_API_KEY: Optional[str] = None
+    ANTHROPIC_MODEL: str = "claude-3-opus-20240229"
+    
+    # Email
+    MAIL_USERNAME: str
+    MAIL_PASSWORD: str
+    MAIL_FROM: str
+    MAIL_PORT: int = 587
+    MAIL_SERVER: str
+    MAIL_FROM_NAME: str = "AI Coaching Platform"
+    MAIL_TLS: bool = True
+    MAIL_SSL: bool = False
+    
+    # Sentry
+    SENTRY_DSN: Optional[str] = None
+    
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 60
+    RATE_LIMIT_PER_HOUR: int = 1000
+    
+    # File Upload
+    MAX_FILE_SIZE_MB: int = 50
+    ALLOWED_FILE_TYPES: str = "pdf,doc,docx,txt,png,jpg,jpeg,mp3,mp4,wav"
+    
+    @property
+    def allowed_file_extensions(self) -> List[str]:
+        return self.ALLOWED_FILE_TYPES.split(",")
+    
+    @property
+    def max_file_size_bytes(self) -> int:
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
+    
+    # Background Workers
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
+
+
+# Global settings instance
+settings = Settings()
