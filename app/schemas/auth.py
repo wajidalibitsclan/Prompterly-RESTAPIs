@@ -58,9 +58,44 @@ class PasswordReset(BaseModel):
     """Schema for password reset"""
     token: str
     new_password: str = Field(..., min_length=8, max_length=100)
-    
+
     @validator('new_password')
     def validate_password(cls, v):
+        if not any(char.isdigit() for char in v):
+            raise ValueError('Password must contain at least one digit')
+        if not any(char.isupper() for char in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        return v
+
+
+class OTPVerification(BaseModel):
+    """Schema for OTP verification during registration"""
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+    name: str = Field(..., min_length=2, max_length=255)
+    password: str = Field(..., min_length=8, max_length=100)
+
+    @validator('password')
+    def validate_password(cls, v):
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password cannot be longer than 72 bytes')
+        if not any(char.isdigit() for char in v):
+            raise ValueError('Password must contain at least one digit')
+        if not any(char.isupper() for char in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        return v
+
+
+class PasswordResetOTPVerification(BaseModel):
+    """Schema for OTP verification during password reset"""
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+    @validator('new_password')
+    def validate_password(cls, v):
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password cannot be longer than 72 bytes')
         if not any(char.isdigit() for char in v):
             raise ValueError('Password must contain at least one digit')
         if not any(char.isupper() for char in v):

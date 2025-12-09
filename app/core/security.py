@@ -128,10 +128,10 @@ def create_refresh_token(
 def decode_token(token: str) -> Optional[Dict[str, Any]]:
     """
     Decode and validate a JWT token
-    
+
     Args:
         token: JWT token string
-        
+
     Returns:
         Decoded token payload or None if invalid
     """
@@ -142,7 +142,9 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
             algorithms=[settings.JWT_ALGORITHM]
         )
         return payload
-    except JWTError:
+    except JWTError as e:
+        print(f"[JWT DECODE ERROR] {type(e).__name__}: {e}")
+        print(f"[JWT DECODE ERROR] Token (first 50 chars): {token[:50] if token else 'None'}...")
         return None
 
 

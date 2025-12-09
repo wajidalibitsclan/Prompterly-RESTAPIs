@@ -64,3 +64,27 @@ class UserSession(Base):
     
     def __repr__(self):
         return f"<UserSession(id={self.id}, user_id={self.user_id}, active={self.is_active})>"
+
+
+class EmailOTP(Base):
+    """Email OTP model for verification codes"""
+
+    __tablename__ = "email_otps"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    email = Column(String(255), nullable=False, index=True)
+    otp = Column(String(6), nullable=False)
+    purpose = Column(String(50), nullable=False, default="registration")  # registration, password_reset, etc.
+    expires_at = Column(DateTime, nullable=False)
+    verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if OTP is still valid"""
+        if self.verified_at:
+            return False
+        return datetime.utcnow() < self.expires_at
+
+    def __repr__(self):
+        return f"<EmailOTP(id={self.id}, email={self.email}, valid={self.is_valid})>"

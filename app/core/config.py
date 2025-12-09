@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://localhost:8000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
     
     @validator("CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v: str | List[str]) -> List[str]:
@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     MAIL_FROM_NAME: str = "AI Coaching Platform"
     MAIL_TLS: bool = True
     MAIL_SSL: bool = False
+
+    @validator("MAIL_TLS", "MAIL_SSL", pre=True)
+    def parse_bool(cls, v):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes")
+        return bool(v)
     
     # Sentry
     SENTRY_DSN: Optional[str] = None

@@ -13,6 +13,98 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def send_email_sync(
+    to: str | List[str],
+    subject: str,
+    body: str,
+    html: Optional[str] = None,
+    cc: Optional[List[str]] = None,
+    bcc: Optional[List[str]] = None
+) -> bool:
+    """
+    Send email via SMTP (synchronous version for background tasks)
+
+    Args:
+        to: Recipient email address(es)
+        subject: Email subject
+        body: Plain text email body
+        html: Optional HTML email body
+        cc: Optional CC recipients
+        bcc: Optional BCC recipients
+
+    Returns:
+        True if email sent successfully, False otherwise
+    """
+    server = None
+    try:
+        # Create message
+        msg = MIMEMultipart("alternative")
+        msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
+
+        # Handle single or multiple recipients
+        if isinstance(to, str):
+            to = [to]
+        msg["To"] = ", ".join(to)
+
+        if cc:
+            msg["Cc"] = ", ".join(cc)
+
+        msg["Subject"] = subject
+
+        # Add plain text part
+        text_part = MIMEText(body, "plain")
+        msg.attach(text_part)
+
+        # Add HTML part if provided
+        if html:
+            html_part = MIMEText(html, "html")
+            msg.attach(html_part)
+
+        # Log SMTP settings for debugging
+        logger.info(f"Connecting to SMTP: {settings.MAIL_SERVER}:{settings.MAIL_PORT} TLS={settings.MAIL_TLS} SSL={settings.MAIL_SSL}")
+        logger.info(f"Using credentials: {settings.MAIL_USERNAME[:4]}***")
+
+        # Connect to SMTP server with longer timeout
+        server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=60)
+        server.set_debuglevel(1)  # Enable debug output to see what's happening
+
+        # For Mailtrap on port 2525, use STARTTLS
+        if settings.MAIL_TLS and settings.MAIL_PORT == 2525:
+            # Mailtrap specific handling
+            server.ehlo()
+            context = None  # Use default SSL context
+            server.starttls(context=context)
+            server.ehlo()
+
+        # Login with credentials
+        if settings.MAIL_USERNAME and settings.MAIL_PASSWORD:
+            logger.info("Attempting SMTP login...")
+            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+            logger.info("SMTP login successful")
+
+        # Send email
+        recipients = to + (cc or []) + (bcc or [])
+        server.sendmail(settings.MAIL_FROM, recipients, msg.as_string())
+        logger.info(f"Email sent successfully to {to}")
+        return True
+
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"SMTP Authentication failed: {str(e)}")
+        return False
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP error: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to send email: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if server:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+
 async def send_email(
     to: str | List[str],
     subject: str,
@@ -22,67 +114,9 @@ async def send_email(
     bcc: Optional[List[str]] = None
 ) -> bool:
     """
-    Send email via SMTP
-    
-    Args:
-        to: Recipient email address(es)
-        subject: Email subject
-        body: Plain text email body
-        html: Optional HTML email body
-        cc: Optional CC recipients
-        bcc: Optional BCC recipients
-        
-    Returns:
-        True if email sent successfully, False otherwise
+    Send email via SMTP (async wrapper)
     """
-    try:
-        # Create message
-        msg = MIMEMultipart("alternative")
-        msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
-        
-        # Handle single or multiple recipients
-        if isinstance(to, str):
-            to = [to]
-        msg["To"] = ", ".join(to)
-        
-        if cc:
-            msg["Cc"] = ", ".join(cc)
-        
-        msg["Subject"] = subject
-        
-        # Add plain text part
-        text_part = MIMEText(body, "plain")
-        msg.attach(text_part)
-        
-        # Add HTML part if provided
-        if html:
-            html_part = MIMEText(html, "html")
-            msg.attach(html_part)
-        
-        # Connect to SMTP server
-        if settings.MAIL_TLS:
-            server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT)
-            server.starttls()
-        elif settings.MAIL_SSL:
-            server = smtplib.SMTP_SSL(settings.MAIL_SERVER, settings.MAIL_PORT)
-        else:
-            server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT)
-        
-        # Login if credentials provided
-        if settings.MAIL_USERNAME and settings.MAIL_PASSWORD:
-            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-        
-        # Send email
-        recipients = to + (cc or []) + (bcc or [])
-        server.sendmail(settings.MAIL_FROM, recipients, msg.as_string())
-        server.quit()
-        
-        logger.info(f"Email sent successfully to {to}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to send email: {str(e)}")
-        return False
+    return send_email_sync(to, subject, body, html, cc, bcc)
 
 
 async def send_verification_email(email: str, name: str, token: str) -> bool:
@@ -279,6 +313,142 @@ AI Coaching Team
     return await send_email(
         to=email,
         subject="Welcome to AI Coaching Platform! 🎉",
+        body=body,
+        html=html
+    )
+
+
+def send_otp_email_sync(email: str, name: str, otp: str) -> bool:
+    """
+    Send OTP verification email (synchronous version for background tasks)
+
+    Args:
+        email: User email
+        name: User name
+        otp: 6-digit OTP code
+
+    Returns:
+        True if sent successfully
+    """
+    body = f"""
+Hi {name},
+
+Your verification code for Prompterly is:
+
+{otp}
+
+This code will expire in 10 minutes.
+
+If you didn't request this code, please ignore this email.
+
+Best regards,
+Prompterly Team
+    """
+
+    html = f"""
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <h2>Email Verification</h2>
+    <p>Hi {name},</p>
+    <p>Your verification code for Prompterly is:</p>
+    <div style="text-align: center; margin: 30px 0;">
+        <span style="background-color: #f3f4f6; padding: 15px 30px; font-size: 32px;
+                     font-weight: bold; letter-spacing: 8px; border-radius: 8px;
+                     display: inline-block; color: #1f2937;">
+            {otp}
+        </span>
+    </div>
+    <p style="color: #666; font-size: 14px;">
+        This code will expire in <strong>10 minutes</strong>.
+    </p>
+    <p style="color: #666; font-size: 12px; margin-top: 30px;">
+        If you didn't request this code, please ignore this email.
+    </p>
+    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+    <p style="color: #999; font-size: 12px;">
+        Prompterly<br>
+        © 2025 All rights reserved
+    </p>
+</body>
+</html>
+    """
+
+    return send_email_sync(
+        to=email,
+        subject=f"Your Prompterly Verification Code: {otp}",
+        body=body,
+        html=html
+    )
+
+
+async def send_otp_email(email: str, name: str, otp: str) -> bool:
+    """
+    Send OTP verification email (async wrapper)
+    """
+    return send_otp_email_sync(email, name, otp)
+
+
+def send_password_reset_otp_sync(email: str, name: str, otp: str) -> bool:
+    """
+    Send password reset OTP email (synchronous version for background tasks)
+
+    Args:
+        email: User email
+        name: User name
+        otp: 6-digit OTP code
+
+    Returns:
+        True if sent successfully
+    """
+    body = f"""
+Hi {name},
+
+You requested to reset your password for Prompterly.
+
+Your verification code is:
+
+{otp}
+
+This code will expire in 10 minutes.
+
+If you didn't request this, please ignore this email and your password will remain unchanged.
+
+Best regards,
+Prompterly Team
+    """
+
+    html = f"""
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <h2>Password Reset Request</h2>
+    <p>Hi {name},</p>
+    <p>You requested to reset your password for Prompterly.</p>
+    <p>Your verification code is:</p>
+    <div style="text-align: center; margin: 30px 0;">
+        <span style="background-color: #f3f4f6; padding: 15px 30px; font-size: 32px;
+                     font-weight: bold; letter-spacing: 8px; border-radius: 8px;
+                     display: inline-block; color: #1f2937;">
+            {otp}
+        </span>
+    </div>
+    <p style="color: #666; font-size: 14px;">
+        This code will expire in <strong>10 minutes</strong>.
+    </p>
+    <p style="color: #666; font-size: 12px; margin-top: 30px;">
+        If you didn't request this, please ignore this email and your password will remain unchanged.
+    </p>
+    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+    <p style="color: #999; font-size: 12px;">
+        Prompterly<br>
+        © 2025 All rights reserved
+    </p>
+</body>
+</html>
+    """
+
+    return send_email_sync(
+        to=email,
+        subject=f"Password Reset Code: {otp}",
         body=body,
         html=html
     )
