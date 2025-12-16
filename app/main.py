@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down AI Prompterly Platform API...")
 
 
-# Create FastAPI application
+# Create FastAPI application ----
 app = FastAPI(
     title=settings.APP_NAME,
     description="Next-generation AI-powered coaching ecosystem",
