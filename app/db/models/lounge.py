@@ -26,9 +26,9 @@ class MembershipRole(str, Enum):
 
 class Lounge(Base):
     """Lounge model - coaching spaces created by mentors"""
-    
+
     __tablename__ = "lounges"
-    
+
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     mentor_id = Column(Integer, ForeignKey("mentors.id"), nullable=False)
     title = Column(String(255), nullable=False)
@@ -43,12 +43,14 @@ class Lounge(Base):
     plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=True)
     max_members = Column(Integer, nullable=True)
     is_public_listing = Column(Boolean, default=True, nullable=False)
+    profile_image_id = Column(Integer, ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     mentor = relationship("Mentor", back_populates="lounges")
     category = relationship("Category", back_populates="lounges")
     plan = relationship("SubscriptionPlan", back_populates="lounges")
+    profile_image = relationship("File", foreign_keys=[profile_image_id])
     memberships = relationship(
         "LoungeMembership",
         back_populates="lounge",

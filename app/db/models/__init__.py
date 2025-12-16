@@ -38,6 +38,13 @@ from app.db.models.misc import (
     RequestType,
     RequestStatus
 )
+from app.db.models.knowledge_base import (
+    KBCategory,
+    KBPrompt,
+    KBDocument,
+    KBDocumentChunk,
+    KBFaq
+)
 
 __all__ = [
     # User models
@@ -91,4 +98,11 @@ __all__ = [
     "NotificationStatus",
     "RequestType",
     "RequestStatus",
+
+    # Knowledge Base models
+    "KBCategory",
+    "KBPrompt",
+    "KBDocument",
+    "KBDocumentChunk",
+    "KBFaq",
 ]

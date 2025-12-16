@@ -24,7 +24,8 @@ from app.schemas.admin import (
     PlatformHealthResponse,
     UserActivityResponse,
     RevenueReportResponse,
-    UpdateUserRoleRequest
+    UpdateUserRoleRequest,
+    PaginatedUsersResponse
 )
 
 router = APIRouter()
@@ -130,52 +131,59 @@ async def get_platform_health(
     )
 
 
-@router.get("/users", response_model=List[UserManagementResponse])
+@router.get("/users", response_model=PaginatedUsersResponse)
 async def list_users(
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
     role: Optional[str] = None,
     search: Optional[str] = None
 ):
     """
     List users for management
-    
+
     - Requires admin role
     - Supports filtering and search
+    - Returns paginated response
     """
     query = db.query(User)
-    
+
     if role:
         query = query.filter(User.role == role)
-    
+
     if search:
         search_term = f"%{search}%"
         query = query.filter(
             (User.email.ilike(search_term)) | (User.name.ilike(search_term))
         )
-    
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Calculate offset from page
+    skip = (page - 1) * limit
+
     users = query.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
-    
-    result = []
+
+    items = []
     for user in users:
         # Get stats
         lounge_count = db.query(func.count(LoungeMembership.id)).filter(
             LoungeMembership.user_id == user.id,
             LoungeMembership.left_at.is_(None)
         ).scalar()
-        
+
         note_count = db.query(func.count(Note.id)).filter(
             Note.user_id == user.id
         ).scalar()
-        
+
         subscription = db.query(Subscription).filter(
             Subscription.user_id == user.id,
             Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING])
         ).first()
-        
-        result.append(UserManagementResponse(
+
+        items.append(UserManagementResponse(
             id=user.id,
             email=user.email,
             name=user.name,
@@ -186,8 +194,17 @@ async def list_users(
             note_count=note_count,
             subscription_status=subscription.status.value if subscription else None
         ))
-    
-    return result
+
+    # Calculate total pages
+    pages = (total + limit - 1) // limit if total > 0 else 1
+
+    return PaginatedUsersResponse(
+        items=items,
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages
+    )
 
 
 @router.put("/users/{user_id}/role", response_model=UserManagementResponse)

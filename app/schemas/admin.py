@@ -96,3 +96,12 @@ class BanUserRequest(BaseModel):
     """Schema for banning user"""
     reason: str
     duration_days: Optional[int] = None
+
+
+class PaginatedUsersResponse(BaseModel):
+    """Paginated response for users list"""
+    items: List[UserManagementResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int

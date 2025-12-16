@@ -47,11 +47,15 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str
     GOOGLE_REDIRECT_URI: str
     
+    # Storage Configuration
+    STORAGE_TYPE: str = "local"  # "local" or "s3"
+    LOCAL_STORAGE_PATH: str = "uploads"  # Local storage directory
+
     # AWS S3 / DigitalOcean Spaces
-    AWS_ACCESS_KEY_ID: str
-    AWS_SECRET_ACCESS_KEY: str
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_REGION: str = "us-east-1"
-    S3_BUCKET_NAME: str
+    S3_BUCKET_NAME: Optional[str] = None
     S3_ENDPOINT_URL: Optional[str] = None
     
     # Stripe

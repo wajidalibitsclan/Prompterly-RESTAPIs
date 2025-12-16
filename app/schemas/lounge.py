@@ -54,18 +54,19 @@ class LoungeResponse(BaseModel):
     plan_id: Optional[int]
     max_members: Optional[int]
     is_public_listing: bool
+    profile_image_url: Optional[str] = None
     created_at: datetime
-    
+
     # Nested data
     mentor_name: Optional[str]
     mentor_avatar: Optional[str]
     category_name: Optional[str]
-    
+
     # Stats
     member_count: int = 0
     is_full: bool = False
     is_member: bool = False
-    
+
     class Config:
         from_attributes = True
 
@@ -79,14 +80,15 @@ class LoungeListResponse(BaseModel):
     description: Optional[str]
     category_id: int
     access_type: AccessType
+    profile_image_url: Optional[str] = None
     created_at: datetime
-    
+
     mentor_name: Optional[str]
     mentor_avatar: Optional[str]
     category_name: Optional[str]
     member_count: int = 0
     is_full: bool = False
-    
+
     class Config:
         from_attributes = True
 

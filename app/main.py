@@ -6,8 +6,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
+from pathlib import Path
 import time
 import uuid
 
@@ -86,6 +88,14 @@ app.add_middleware(
 
 # Add GZip compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+# Mount static files for local storage
+if settings.STORAGE_TYPE.lower() == "local":
+    uploads_path = Path(settings.LOCAL_STORAGE_PATH)
+    uploads_path.mkdir(parents=True, exist_ok=True)
+    app.mount("/files", StaticFiles(directory=str(uploads_path)), name="files")
+    logger.info(f"Local file storage mounted at /files -> {uploads_path.absolute()}")
 
 
 # Request logging middleware
@@ -301,7 +311,7 @@ async def root():
 # API Routers
 # =============================================================================
 
-from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin
+from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin, knowledge_base
 
 # Include API v1 routers
 api_v1_prefix = settings.API_V1_PREFIX
@@ -317,6 +327,7 @@ app.include_router(billing.router, prefix=f"{api_v1_prefix}/billing", tags=["Bil
 app.include_router(notifications.router, prefix=f"{api_v1_prefix}/notifications", tags=["Notifications"])
 app.include_router(cms.router, prefix=f"{api_v1_prefix}/cms", tags=["CMS"])
 app.include_router(admin.router, prefix=f"{api_v1_prefix}/admin", tags=["Admin"])
+app.include_router(knowledge_base.router, prefix=f"{api_v1_prefix}/knowledge-base", tags=["Knowledge Base"])
 
 logger.info(f"Registered {len(app.routes)} routes")
 

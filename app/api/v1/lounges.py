@@ -2,7 +2,7 @@
 Lounge API endpoints
 Handles lounge CRUD, membership, and discovery
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
@@ -13,6 +13,7 @@ from app.core.jwt import (
     get_current_user,
     get_current_active_user,
     get_current_mentor,
+    get_current_admin,
     get_optional_current_user
 )
 from app.db.models.user import User
@@ -32,8 +33,19 @@ from app.schemas.lounge import (
     JoinLoungeRequest,
     UpdateMemberRole
 )
+from app.services.file_service import file_service
 
 router = APIRouter()
+
+
+async def get_profile_image_url(lounge: Lounge, db: Session) -> Optional[str]:
+    """Get the profile image URL for a lounge"""
+    if lounge.profile_image_id:
+        try:
+            return await file_service.get_file_url(lounge.profile_image_id, db)
+        except Exception:
+            return None
+    return None
 
 
 @router.get("/", response_model=List[LoungeListResponse])
@@ -79,7 +91,7 @@ async def list_lounges(
         )
     
     lounges = query.offset(skip).limit(limit).all()
-    
+
     # Build response with stats
     result = []
     for lounge in lounges:
@@ -87,10 +99,12 @@ async def list_lounges(
             LoungeMembership.lounge_id == lounge.id,
             LoungeMembership.left_at.is_(None)
         ).scalar()
-        
-        is_full = (lounge.max_members is not None and 
+
+        is_full = (lounge.max_members is not None and
                    member_count >= lounge.max_members)
-        
+
+        profile_image_url = await get_profile_image_url(lounge, db)
+
         result.append(LoungeListResponse(
             id=lounge.id,
             mentor_id=lounge.mentor_id,
@@ -99,6 +113,7 @@ async def list_lounges(
             description=lounge.description,
             category_id=lounge.category_id,
             access_type=lounge.access_type,
+            profile_image_url=profile_image_url,
             created_at=lounge.created_at,
             mentor_name=lounge.mentor.user.name if lounge.mentor else None,
             mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,
@@ -106,7 +121,7 @@ async def list_lounges(
             member_count=member_count,
             is_full=is_full
         ))
-    
+
     return result
 
 
@@ -183,6 +198,7 @@ async def create_lounge(
         plan_id=lounge.plan_id,
         max_members=lounge.max_members,
         is_public_listing=lounge.is_public_listing,
+        profile_image_url=None,
         created_at=lounge.created_at,
         mentor_name=current_user.name,
         mentor_avatar=current_user.avatar_url,
@@ -251,7 +267,9 @@ async def get_lounge(
             LoungeMembership.user_id == current_user.id,
             LoungeMembership.left_at.is_(None)
         ).first() is not None
-    
+
+    profile_image_url = await get_profile_image_url(lounge, db)
+
     return LoungeResponse(
         id=lounge.id,
         mentor_id=lounge.mentor_id,
@@ -263,6 +281,7 @@ async def get_lounge(
         plan_id=lounge.plan_id,
         max_members=lounge.max_members,
         is_public_listing=lounge.is_public_listing,
+        profile_image_url=profile_image_url,
         created_at=lounge.created_at,
         mentor_name=lounge.mentor.user.name if lounge.mentor else None,
         mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,
@@ -338,16 +357,18 @@ async def update_lounge(
     
     db.commit()
     db.refresh(lounge)
-    
+
     # Get stats
     member_count = db.query(func.count(LoungeMembership.id)).filter(
         LoungeMembership.lounge_id == lounge_id,
         LoungeMembership.left_at.is_(None)
     ).scalar()
-    
-    is_full = (lounge.max_members is not None and 
+
+    is_full = (lounge.max_members is not None and
                member_count >= lounge.max_members)
-    
+
+    profile_image_url = await get_profile_image_url(lounge, db)
+
     return LoungeResponse(
         id=lounge.id,
         mentor_id=lounge.mentor_id,
@@ -359,6 +380,7 @@ async def update_lounge(
         plan_id=lounge.plan_id,
         max_members=lounge.max_members,
         is_public_listing=lounge.is_public_listing,
+        profile_image_url=profile_image_url,
         created_at=lounge.created_at,
         mentor_name=current_user.name,
         mentor_avatar=current_user.avatar_url,
@@ -581,5 +603,148 @@ async def get_lounge_members(
             user_avatar=user.avatar_url,
             user_email=user.email if is_mentor else None
         ))
-    
+
     return result
+
+
+@router.post("/{lounge_id}/profile-image", response_model=LoungeResponse)
+async def upload_lounge_profile_image(
+    lounge_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload profile image for a lounge
+
+    - Requires admin role
+    - Accepts image files (jpg, png, webp)
+    - Returns updated lounge data
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    # Validate file type
+    allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type. Allowed: {', '.join(allowed_types)}"
+        )
+
+    # Delete old profile image if exists
+    if lounge.profile_image_id:
+        try:
+            from app.db.models.file import File as FileModel
+            old_file = db.query(FileModel).filter(FileModel.id == lounge.profile_image_id).first()
+            if old_file:
+                await file_service.delete_file_by_path(old_file.storage_path)
+                lounge.profile_image_id = None
+                db.commit()
+                db.delete(old_file)
+                db.commit()
+        except Exception:
+            pass  # Ignore errors when deleting old image
+
+    # Upload new image
+    try:
+        file_record = await file_service.upload_file(
+            file=file,
+            user_id=current_user.id,
+            db=db,
+            folder="lounges/profile_images"
+        )
+
+        # Update lounge with new profile image
+        lounge.profile_image_id = file_record.id
+        db.commit()
+        db.refresh(lounge)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
+
+    # Build response
+    member_count = db.query(func.count(LoungeMembership.id)).filter(
+        LoungeMembership.lounge_id == lounge_id,
+        LoungeMembership.left_at.is_(None)
+    ).scalar()
+
+    is_full = (lounge.max_members is not None and
+               member_count >= lounge.max_members)
+
+    profile_image_url = await get_profile_image_url(lounge, db)
+
+    return LoungeResponse(
+        id=lounge.id,
+        mentor_id=lounge.mentor_id,
+        title=lounge.title,
+        slug=lounge.slug,
+        description=lounge.description,
+        category_id=lounge.category_id,
+        access_type=lounge.access_type,
+        plan_id=lounge.plan_id,
+        max_members=lounge.max_members,
+        is_public_listing=lounge.is_public_listing,
+        profile_image_url=profile_image_url,
+        created_at=lounge.created_at,
+        mentor_name=lounge.mentor.user.name if lounge.mentor else None,
+        mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,
+        category_name=lounge.category.name if lounge.category else None,
+        member_count=member_count,
+        is_full=is_full,
+        is_member=False
+    )
+
+
+@router.delete("/{lounge_id}/profile-image", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lounge_profile_image(
+    lounge_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete profile image for a lounge
+
+    - Requires admin role
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    if not lounge.profile_image_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Lounge has no profile image"
+        )
+
+    # Get file record and delete
+    from app.db.models.file import File as FileModel
+    file_record = db.query(FileModel).filter(FileModel.id == lounge.profile_image_id).first()
+
+    if file_record:
+        try:
+            await file_service.delete_file_by_path(file_record.storage_path)
+        except Exception:
+            pass
+
+        # Remove reference from lounge
+        lounge.profile_image_id = None
+        db.commit()
+
+        # Delete file record
+        db.delete(file_record)
+        db.commit()
+
+    return None

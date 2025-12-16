@@ -103,5 +103,20 @@ class User(Base):
         cascade="all, delete-orphan"
     )
     
+    @property
+    def is_active(self) -> bool:
+        """Check if user account is active (has verified email)"""
+        return self.email_verified_at is not None
+
+    @property
+    def is_admin(self) -> bool:
+        """Check if user has admin role"""
+        return self.role == UserRole.ADMIN
+
+    @property
+    def is_mentor(self) -> bool:
+        """Check if user has mentor role"""
+        return self.role == UserRole.MENTOR
+
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"

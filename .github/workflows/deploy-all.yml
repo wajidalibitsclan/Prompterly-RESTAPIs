@@ -1,0 +1,101 @@
+name: Deploy Full Stack
+
+on:
+  workflow_dispatch:  # Manual trigger only for full deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Full Stack
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          script: |
+            echo "=== Full Stack Deployment Started ==="
+
+            PROJECT_PATH="${{ secrets.PROJECT_PATH }}"
+            FRONTEND_PATH="${{ secrets.FRONTEND_PATH }}"
+
+            # ===== BACKEND SETUP =====
+            echo "--- Setting up Backend ---"
+
+            cd $PROJECT_PATH
+
+            echo "Pulling latest backend code..."
+            git pull origin main
+
+            # Create virtual environment if not exists
+            if [ ! -d ".venv" ]; then
+              echo "Creating virtual environment..."
+              python3 -m venv .venv
+            fi
+
+            echo "Activating virtual environment..."
+            source .venv/bin/activate
+
+            echo "Installing Python dependencies..."
+            pip install --upgrade pip
+            pip install -r requirements.txt
+
+            echo "Running database migrations..."
+            alembic upgrade head || echo "Migration skipped or failed"
+
+            # Setup systemd service if not exists
+            if [ ! -f "/etc/systemd/system/${{ secrets.BACKEND_SERVICE }}.service" ]; then
+              echo "Setting up systemd service..."
+              cp deployment/prompterly-backend.service /etc/systemd/system/${{ secrets.BACKEND_SERVICE }}.service
+              systemctl daemon-reload
+              systemctl enable ${{ secrets.BACKEND_SERVICE }}
+            fi
+
+            # Create uploads directory
+            mkdir -p $PROJECT_PATH/uploads
+            chmod 755 $PROJECT_PATH/uploads
+
+            echo "Restarting backend service..."
+            systemctl restart ${{ secrets.BACKEND_SERVICE }}
+
+            # ===== FRONTEND SETUP =====
+            echo "--- Setting up Frontend ---"
+
+            cd $FRONTEND_PATH
+
+            echo "Pulling latest frontend code..."
+            git pull origin main
+
+            echo "Installing Node dependencies..."
+            npm install
+
+            echo "Building frontend..."
+            npm run build
+
+            cd $PROJECT_PATH
+
+            # Setup Apache if not configured
+            if [ ! -f "/etc/apache2/sites-available/${{ secrets.APACHE_SITE }}.conf" ]; then
+              echo "Setting up Apache..."
+              # Enable required modules (if not already enabled)
+              a2enmod proxy proxy_http rewrite headers || true
+              # Copy config
+              cp deployment/prompterly-apache.conf /etc/apache2/sites-available/${{ secrets.APACHE_SITE }}.conf
+              # Enable site (without disturbing other sites)
+              a2ensite ${{ secrets.APACHE_SITE }}.conf
+            fi
+
+            echo "Reloading Apache..."
+            apache2ctl configtest && systemctl reload apache2 || echo "Apache reload skipped"
+
+            # ===== STATUS CHECK =====
+            echo "--- Checking Status ---"
+            systemctl status ${{ secrets.BACKEND_SERVICE }} --no-pager || true
+
+            echo "=== Full Stack Deployment Completed ==="
