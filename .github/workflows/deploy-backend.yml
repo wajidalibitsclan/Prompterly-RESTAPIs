@@ -34,6 +34,9 @@ jobs:
             PROJECT_PATH="/home/prompterly/public_html/api"
             SERVICE_NAME="prompterly-backend"
 
+            # Fix git ownership issue
+            git config --global --add safe.directory "$PROJECT_PATH"
+
             # Backup .env if exists
             if [ -f "$PROJECT_PATH/.env" ]; then
               echo "Backing up .env file..."
