@@ -4,29 +4,25 @@ Handles all environment variables and application settings
 """
 from typing import List, Optional
 from pydantic_settings import BaseSettings
-from pydantic import AnyHttpUrl, validator
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
-    
+
     # Application
     APP_NAME: str = "AI Coaching Lounges"
     APP_ENV: str = "development"
     DEBUG: bool = True
     API_V1_PREFIX: str = "/api/v1"
     SECRET_KEY: str
-    
-    # CORS
-    CORS_ORIGINS: List[str] = ["https://prompterly.bitsclan.us", "http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
-    
-    @validator("CORS_ORIGINS", pre=True)
-    def assemble_cors_origins(cls, v: str | List[str]) -> List[str]:
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, (list, str)):
-            return v
-        raise ValueError(v)
+
+    # CORS - stored as string, parsed to list via property
+    CORS_ORIGINS_STR: str = "https://prompterly.bitsclan.us,http://localhost:3000,http://localhost:5173"
+
+    @property
+    def CORS_ORIGINS(self) -> List[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS_STR.split(",") if origin.strip()]
     
     # Database
     DATABASE_URL: str
@@ -90,7 +86,8 @@ class Settings(BaseSettings):
     MAIL_TLS: bool = True
     MAIL_SSL: bool = False
 
-    @validator("MAIL_TLS", "MAIL_SSL", pre=True)
+    @field_validator("MAIL_TLS", "MAIL_SSL", mode="before")
+    @classmethod
     def parse_bool(cls, v):
         if isinstance(v, bool):
             return v

@@ -3,12 +3,12 @@ Description=Prompterly Backend API
 After=network.target
 
 [Service]
-User=root
-Group=root
-WorkingDirectory=/home/prompterly/public_html
-Environment="PATH=/home/prompterly/public_html/.venv/bin"
-EnvironmentFile=/home/prompterly/public_html/.env
-ExecStart=/home/prompterly/public_html/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+User=www-data
+Group=www-data
+WorkingDirectory=/home/prompterly/public_html/api
+Environment="PATH=/home/prompterly/public_html/api/.venv/bin"
+EnvironmentFile=/home/prompterly/public_html/api/.env
+ExecStart=/home/prompterly/public_html/api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
 
