@@ -32,6 +32,9 @@ jobs:
             echo "Installing dependencies..."
             npm install
 
+            echo "Setting up environment variables..."
+            echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" > .env
+
             echo "Building frontend..."
             npm run build
 
