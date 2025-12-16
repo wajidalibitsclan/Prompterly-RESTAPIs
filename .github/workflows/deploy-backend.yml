@@ -28,22 +28,39 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
+            set -e
             echo "=== Backend API Deployment Started ==="
 
             PROJECT_PATH="/home/prompterly/public_html/api"
+            SERVICE_NAME="prompterly-backend"
 
-            # Clone if not exists
-            if [ ! -d "$PROJECT_PATH/.git" ]; then
-              echo "Cloning repository..."
-              mkdir -p $PROJECT_PATH
-              git clone https://github.com/${{ github.repository }}.git $PROJECT_PATH
+            # Backup .env if exists
+            if [ -f "$PROJECT_PATH/.env" ]; then
+              echo "Backing up .env file..."
+              cp "$PROJECT_PATH/.env" /tmp/prompterly-env-backup
             fi
 
-            cd $PROJECT_PATH
+            # If not a git repo, remove and clone fresh
+            if [ ! -d "$PROJECT_PATH/.git" ]; then
+              echo "Not a git repo. Setting up fresh clone..."
+              rm -rf "$PROJECT_PATH"
+              mkdir -p "$PROJECT_PATH"
+              git clone https://github.com/${{ github.repository }}.git "$PROJECT_PATH"
+            fi
+
+            cd "$PROJECT_PATH"
 
             echo "Pulling latest code..."
             git fetch origin main
             git reset --hard origin/main
+            git clean -fd
+
+            # Restore .env if backed up
+            if [ -f "/tmp/prompterly-env-backup" ]; then
+              echo "Restoring .env file..."
+              cp /tmp/prompterly-env-backup "$PROJECT_PATH/.env"
+              rm /tmp/prompterly-env-backup
+            fi
 
             # Create virtual environment if not exists
             if [ ! -d ".venv" ]; then
@@ -62,11 +79,10 @@ jobs:
             alembic upgrade head || echo "Migration skipped or failed"
 
             # Create uploads directory if not exists
-            mkdir -p $PROJECT_PATH/uploads
-            chmod 755 $PROJECT_PATH/uploads
+            mkdir -p "$PROJECT_PATH/uploads"
+            chmod 755 "$PROJECT_PATH/uploads"
 
             # Update systemd service
-            SERVICE_NAME="prompterly-backend"
             echo "Updating systemd service..."
             sudo cp deployment/prompterly-backend.service /etc/systemd/system/${SERVICE_NAME}.service
             sudo systemctl daemon-reload
@@ -75,7 +91,14 @@ jobs:
             echo "Restarting backend service..."
             sudo systemctl restart ${SERVICE_NAME}
 
+            # Wait a moment for service to start
+            sleep 3
+
             echo "Checking service status..."
             sudo systemctl status ${SERVICE_NAME} --no-pager || true
+
+            # Test health endpoint
+            echo "Testing health endpoint..."
+            curl -s http://127.0.0.1:8000/health || echo "Health check failed"
 
             echo "=== Backend API Deployment Completed ==="
