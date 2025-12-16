@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://localhost:8000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
+    CORS_ORIGINS: List[str] = ["https://prompterly.bitsclan.us", "http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
     
     @validator("CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v: str | List[str]) -> List[str]:

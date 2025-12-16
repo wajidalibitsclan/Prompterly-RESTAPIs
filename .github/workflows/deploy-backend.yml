@@ -1,4 +1,4 @@
-name: Deploy Backend
+name: Deploy Backend API
 
 on:
   push:
@@ -27,21 +27,22 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
-            echo "=== Backend Deployment Started ==="
+            echo "=== Backend API Deployment Started ==="
 
-            PROJECT_PATH="${{ secrets.PROJECT_PATH }}"
+            PROJECT_PATH="/home/prompterly/public_html/api"
 
             # Clone if not exists
             if [ ! -d "$PROJECT_PATH/.git" ]; then
               echo "Cloning repository..."
-              mkdir -p $(dirname $PROJECT_PATH)
+              mkdir -p $PROJECT_PATH
               git clone https://github.com/${{ github.repository }}.git $PROJECT_PATH
             fi
 
             cd $PROJECT_PATH
 
-            echo "Pulling latest backend code..."
-            git pull origin main
+            echo "Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
 
             # Create virtual environment if not exists
             if [ ! -d ".venv" ]; then
@@ -59,22 +60,23 @@ jobs:
             echo "Running database migrations..."
             alembic upgrade head || echo "Migration skipped or failed"
 
-            # Setup systemd service if not exists
-            if [ ! -f "/etc/systemd/system/${{ secrets.BACKEND_SERVICE }}.service" ]; then
-              echo "Setting up systemd service..."
-              cp deployment/prompterly-backend.service /etc/systemd/system/${{ secrets.BACKEND_SERVICE }}.service
-              systemctl daemon-reload
-              systemctl enable ${{ secrets.BACKEND_SERVICE }}
-            fi
-
-            echo "Restarting backend service..."
-            systemctl restart ${{ secrets.BACKEND_SERVICE }}
-
             # Create uploads directory if not exists
             mkdir -p $PROJECT_PATH/uploads
             chmod 755 $PROJECT_PATH/uploads
 
-            echo "Checking service status..."
-            systemctl status ${{ secrets.BACKEND_SERVICE }} --no-pager || true
+            # Setup systemd service if not exists
+            SERVICE_NAME="prompterly-backend"
+            if [ ! -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+              echo "Setting up systemd service..."
+              sudo cp deployment/prompterly-backend.service /etc/systemd/system/${SERVICE_NAME}.service
+              sudo systemctl daemon-reload
+              sudo systemctl enable ${SERVICE_NAME}
+            fi
 
-            echo "=== Backend Deployment Completed ==="
+            echo "Restarting backend service..."
+            sudo systemctl restart ${SERVICE_NAME}
+
+            echo "Checking service status..."
+            sudo systemctl status ${SERVICE_NAME} --no-pager || true
+
+            echo "=== Backend API Deployment Completed ==="
