@@ -69,16 +69,26 @@ jobs:
             # Function to check if venv is healthy
             check_venv() {
               if [ ! -d "$VENV_PATH" ]; then
+                echo "Venv directory does not exist"
                 return 1
               fi
               if [ ! -f "$VENV_PATH/bin/python" ]; then
+                echo "Venv python not found"
                 return 1
               fi
               if [ ! -f "$VENV_PATH/bin/pip" ]; then
+                echo "Venv pip not found"
+                return 1
+              fi
+              # Check if shebang points to a valid path (not a different machine's path)
+              SHEBANG=$(head -1 "$VENV_PATH/bin/pip" 2>/dev/null || echo "")
+              if echo "$SHEBANG" | grep -q "/home/wajid-ali\|/Users/\|C:\\\\"; then
+                echo "Venv has incorrect shebang (from different machine): $SHEBANG"
                 return 1
               fi
               # Test if python in venv actually works
               if ! "$VENV_PATH/bin/python" --version > /dev/null 2>&1; then
+                echo "Venv python doesn't execute properly"
                 return 1
               fi
               return 0
