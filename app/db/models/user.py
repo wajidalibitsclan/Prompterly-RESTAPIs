@@ -26,7 +26,7 @@ class User(Base):
     name = Column(String(255), nullable=False)
     avatar_url = Column(String(500), nullable=True)
     role = Column(
-        SQLEnum(UserRole),
+        SQLEnum(UserRole, values_callable=lambda obj: [e.value for e in obj]),
         default=UserRole.MEMBER,
         nullable=False
     )

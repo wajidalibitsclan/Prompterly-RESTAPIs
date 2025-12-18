@@ -15,10 +15,11 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
     API_V1_PREFIX: str = "/api/v1"
+    BASE_URL: str = "http://localhost:8000"  # Base URL for generating absolute URLs
     SECRET_KEY: str
 
     # CORS - stored as string, parsed to list via property
-    CORS_ORIGINS_STR: str = "https://prompterly.bitsclan.us,http://localhost:3000,http://localhost:5173"
+    CORS_ORIGINS_STR: str = "https://prompterly.bitsclan.us,http://localhost:3000,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174"
 
     @property
     def CORS_ORIGINS(self) -> List[str]:
@@ -121,6 +122,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"  # Ignore extra fields in .env
 
 
 # Global settings instance

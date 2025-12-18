@@ -12,7 +12,7 @@ class LoungeCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=255)
     slug: str = Field(..., min_length=3, max_length=255)
     description: Optional[str] = None
-    category_id: int
+    category_id: Optional[int] = None
     access_type: AccessType = AccessType.FREE
     plan_id: Optional[int] = None
     max_members: Optional[int] = Field(None, ge=1, le=10000)
@@ -49,7 +49,7 @@ class LoungeResponse(BaseModel):
     title: str
     slug: str
     description: Optional[str]
-    category_id: int
+    category_id: Optional[int] = None
     access_type: AccessType
     plan_id: Optional[int]
     max_members: Optional[int]
@@ -78,7 +78,7 @@ class LoungeListResponse(BaseModel):
     title: str
     slug: str
     description: Optional[str]
-    category_id: int
+    category_id: Optional[int] = None
     access_type: AccessType
     profile_image_url: Optional[str] = None
     created_at: datetime

@@ -105,3 +105,95 @@ class PaginatedUsersResponse(BaseModel):
     page: int
     limit: int
     pages: int
+
+
+# =============================================================================
+# User CRUD Schemas
+# =============================================================================
+
+class CreateUserRequest(BaseModel):
+    """Schema for creating a new user"""
+    email: str
+    password: str
+    name: str
+    role: str = "member"
+    email_verified: bool = False
+
+
+class UpdateUserRequest(BaseModel):
+    """Schema for updating a user"""
+    email: Optional[str] = None
+    name: Optional[str] = None
+    role: Optional[str] = None
+    email_verified: Optional[bool] = None
+    avatar_url: Optional[str] = None
+
+
+class UserDetailResponse(BaseModel):
+    """Detailed user response for admin"""
+    id: int
+    email: str
+    name: str
+    role: str
+    avatar_url: Optional[str]
+    email_verified_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+    lounge_count: int = 0
+    note_count: int = 0
+    subscription_status: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# =============================================================================
+# Mentor CRUD Schemas
+# =============================================================================
+
+class CreateMentorRequest(BaseModel):
+    """Schema for creating a mentor profile"""
+    user_id: int
+    headline: Optional[str] = None
+    bio: Optional[str] = None
+    intro_video_url: Optional[str] = None
+    experience_years: int = 0
+    status: str = "pending"
+
+
+class UpdateMentorRequest(BaseModel):
+    """Schema for updating a mentor"""
+    headline: Optional[str] = None
+    bio: Optional[str] = None
+    intro_video_url: Optional[str] = None
+    experience_years: Optional[int] = None
+    status: Optional[str] = None
+
+
+class MentorDetailResponse(BaseModel):
+    """Detailed mentor response for admin"""
+    id: int
+    user_id: int
+    user_name: str
+    user_email: str
+    user_avatar: Optional[str]
+    headline: Optional[str]
+    bio: Optional[str]
+    intro_video_url: Optional[str]
+    experience_years: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    lounge_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class PaginatedMentorsResponse(BaseModel):
+    """Paginated response for mentors list"""
+    items: List[MentorDetailResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int

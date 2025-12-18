@@ -34,9 +34,9 @@ class Lounge(Base):
     title = Column(String(255), nullable=False)
     slug = Column(String(255), unique=True, nullable=False, index=True)
     description = Column(Text, nullable=True)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
     access_type = Column(
-        SQLEnum(AccessType),
+        SQLEnum(AccessType, values_callable=lambda obj: [e.value for e in obj]),
         default=AccessType.FREE,
         nullable=False
     )
@@ -87,7 +87,7 @@ class LoungeMembership(Base):
     lounge_id = Column(Integer, ForeignKey("lounges.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     role = Column(
-        SQLEnum(MembershipRole),
+        SQLEnum(MembershipRole, values_callable=lambda obj: [e.value for e in obj]),
         default=MembershipRole.MEMBER,
         nullable=False
     )

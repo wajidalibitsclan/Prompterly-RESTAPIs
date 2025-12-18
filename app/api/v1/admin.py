@@ -14,7 +14,8 @@ from app.db.session import get_db
 from app.core.jwt import get_current_admin
 from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
-from app.db.models.lounge import Lounge, LoungeMembership
+from app.db.models.lounge import Lounge, LoungeMembership, AccessType
+from app.db.models.mentor import Category
 from app.db.models.billing import Subscription, Payment, SubscriptionStatus
 from app.db.models.note import Note
 from app.db.models.chat import ChatMessage
@@ -25,10 +26,26 @@ from app.schemas.admin import (
     UserActivityResponse,
     RevenueReportResponse,
     UpdateUserRoleRequest,
-    PaginatedUsersResponse
+    PaginatedUsersResponse,
+    CreateUserRequest,
+    UpdateUserRequest,
+    CreateMentorRequest,
+    UpdateMentorRequest
 )
+from app.core.security import hash_password
+from app.services.file_service import file_service
 
 router = APIRouter()
+
+
+async def get_lounge_profile_image_url(lounge: Lounge, db: Session):
+    """Get the profile image URL for a lounge"""
+    if lounge.profile_image_id:
+        try:
+            return await file_service.get_file_url(lounge.profile_image_id, db)
+        except Exception:
+            return None
+    return None
 
 # Track app start time for uptime
 app_start_time = time.time()
@@ -405,6 +422,39 @@ async def get_revenue_report(
     return list(reversed(result))
 
 
+@router.get("/mentors")
+async def get_all_mentors(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500)
+):
+    """
+    Get all mentors
+
+    - Requires admin role
+    - Returns all mentors
+    """
+    from app.db.models.mentor import MentorStatus
+
+    mentors = db.query(Mentor).filter(
+        Mentor.status == MentorStatus.APPROVED
+    ).offset(skip).limit(limit).all()
+
+    result = []
+    for mentor in mentors:
+        result.append({
+            'id': mentor.id,
+            'user_id': mentor.user_id,
+            'user_name': mentor.user.name,
+            'user_email': mentor.user.email,
+            'headline': mentor.headline,
+            'status': mentor.status.value
+        })
+
+    return result
+
+
 @router.get("/mentors/pending")
 async def get_pending_mentors(
     db: Session = Depends(get_db),
@@ -412,12 +462,12 @@ async def get_pending_mentors(
 ):
     """
     Get pending mentor applications
-    
+
     - Requires admin role
     - Returns mentors awaiting approval
     """
     from app.db.models.mentor import MentorStatus
-    
+
     mentors = db.query(Mentor).filter(
         Mentor.status == MentorStatus.PENDING
     ).order_by(Mentor.created_at.desc()).all()
@@ -460,3 +510,673 @@ async def export_users(
         "filename": f"users_export_{datetime.utcnow().strftime('%Y%m%d')}.csv",
         "data": csv_data
     }
+
+
+# =============================================================================
+# Admin Lounge Management
+# =============================================================================
+
+@router.get("/lounges")
+async def get_admin_lounges(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100)
+):
+    """
+    Get all lounges for admin management
+
+    - Requires admin role
+    - Returns all lounges with stats
+    """
+    lounges = db.query(Lounge).offset(skip).limit(limit).all()
+
+    result = []
+    for lounge in lounges:
+        member_count = db.query(func.count(LoungeMembership.id)).filter(
+            LoungeMembership.lounge_id == lounge.id,
+            LoungeMembership.left_at.is_(None)
+        ).scalar()
+
+        # Get profile image URL
+        profile_image_url = await get_lounge_profile_image_url(lounge, db)
+
+        result.append({
+            "id": lounge.id,
+            "title": lounge.title,
+            "slug": lounge.slug,
+            "description": lounge.description,
+            "category_id": lounge.category_id,
+            "category_name": lounge.category.name if lounge.category else None,
+            "access_type": lounge.access_type.value,
+            "max_members": lounge.max_members,
+            "is_public_listing": lounge.is_public_listing,
+            "mentor_id": lounge.mentor_id,
+            "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
+            "profile_image_url": profile_image_url,
+            "member_count": member_count,
+            "is_full": lounge.is_full,
+            "created_at": lounge.created_at
+        })
+
+    return result
+
+
+@router.get("/lounges/{lounge_id}")
+async def get_admin_lounge(
+    lounge_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Get single lounge details (admin only)
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    member_count = db.query(func.count(LoungeMembership.id)).filter(
+        LoungeMembership.lounge_id == lounge.id,
+        LoungeMembership.left_at.is_(None)
+    ).scalar()
+
+    profile_image_url = await get_lounge_profile_image_url(lounge, db)
+
+    return {
+        "id": lounge.id,
+        "title": lounge.title,
+        "slug": lounge.slug,
+        "description": lounge.description,
+        "category_id": lounge.category_id,
+        "category_name": lounge.category.name if lounge.category else None,
+        "access_type": lounge.access_type.value,
+        "max_members": lounge.max_members,
+        "is_public_listing": lounge.is_public_listing,
+        "mentor_id": lounge.mentor_id,
+        "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
+        "profile_image_url": profile_image_url,
+        "member_count": member_count,
+        "is_full": lounge.is_full,
+        "created_at": lounge.created_at
+    }
+
+
+@router.post("/lounges", status_code=status.HTTP_201_CREATED)
+async def admin_create_lounge(
+    title: str,
+    slug: str,
+    mentor_id: int,
+    description: Optional[str] = None,
+    category_id: Optional[int] = None,
+    access_type: str = "free",
+    max_members: Optional[int] = None,
+    is_public_listing: bool = True,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Create lounge as admin
+
+    - Requires admin role
+    - Can assign to any mentor
+    """
+    # Verify mentor exists
+    mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
+    if not mentor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mentor not found"
+        )
+
+    # Check slug uniqueness
+    existing = db.query(Lounge).filter(Lounge.slug == slug).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Lounge with this slug already exists"
+        )
+
+    # Verify category if provided
+    if category_id:
+        category = db.query(Category).filter(Category.id == category_id).first()
+        if not category:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Category not found"
+            )
+
+    # Map access_type string to enum
+    access_type_enum = AccessType.FREE
+    if access_type == "paid":
+        access_type_enum = AccessType.PAID
+    elif access_type == "invite_only":
+        access_type_enum = AccessType.INVITE_ONLY
+
+    # Create lounge
+    lounge = Lounge(
+        mentor_id=mentor_id,
+        title=title,
+        slug=slug,
+        description=description,
+        category_id=category_id,
+        access_type=access_type_enum,
+        max_members=max_members,
+        is_public_listing=is_public_listing
+    )
+
+    db.add(lounge)
+    db.commit()
+    db.refresh(lounge)
+
+    return {
+        "id": lounge.id,
+        "title": lounge.title,
+        "slug": lounge.slug,
+        "description": lounge.description,
+        "category_id": lounge.category_id,
+        "access_type": lounge.access_type.value,
+        "mentor_id": lounge.mentor_id,
+        "created_at": lounge.created_at
+    }
+
+
+@router.put("/lounges/{lounge_id}")
+async def admin_update_lounge(
+    lounge_id: int,
+    title: Optional[str] = None,
+    slug: Optional[str] = None,
+    description: Optional[str] = None,
+    category_id: Optional[int] = None,
+    mentor_id: Optional[int] = None,
+    access_type: Optional[str] = None,
+    max_members: Optional[int] = None,
+    is_public_listing: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Update lounge details (admin only)
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    # Update fields if provided
+    if title is not None:
+        lounge.title = title
+
+    if slug is not None:
+        # Check slug uniqueness
+        existing = db.query(Lounge).filter(
+            Lounge.slug == slug,
+            Lounge.id != lounge_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lounge with this slug already exists"
+            )
+        lounge.slug = slug
+
+    if description is not None:
+        lounge.description = description
+
+    if category_id is not None:
+        if category_id > 0:
+            category = db.query(Category).filter(Category.id == category_id).first()
+            if not category:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Category not found"
+                )
+            lounge.category_id = category_id
+        else:
+            lounge.category_id = None
+
+    if mentor_id is not None:
+        mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
+        if not mentor:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Mentor not found"
+            )
+        lounge.mentor_id = mentor_id
+
+    if access_type is not None:
+        if access_type == "free":
+            lounge.access_type = AccessType.FREE
+        elif access_type == "paid":
+            lounge.access_type = AccessType.PAID
+        elif access_type == "invite_only":
+            lounge.access_type = AccessType.INVITE_ONLY
+
+    if max_members is not None:
+        lounge.max_members = max_members if max_members > 0 else None
+
+    if is_public_listing is not None:
+        lounge.is_public_listing = is_public_listing
+
+    db.commit()
+    db.refresh(lounge)
+
+    member_count = db.query(func.count(LoungeMembership.id)).filter(
+        LoungeMembership.lounge_id == lounge.id,
+        LoungeMembership.left_at.is_(None)
+    ).scalar()
+
+    profile_image_url = await get_lounge_profile_image_url(lounge, db)
+
+    return {
+        "id": lounge.id,
+        "title": lounge.title,
+        "slug": lounge.slug,
+        "description": lounge.description,
+        "category_id": lounge.category_id,
+        "category_name": lounge.category.name if lounge.category else None,
+        "access_type": lounge.access_type.value,
+        "max_members": lounge.max_members,
+        "is_public_listing": lounge.is_public_listing,
+        "mentor_id": lounge.mentor_id,
+        "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
+        "profile_image_url": profile_image_url,
+        "member_count": member_count,
+        "is_full": lounge.is_full,
+        "created_at": lounge.created_at
+    }
+
+
+@router.delete("/lounges/{lounge_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_lounge(
+    lounge_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Delete lounge (admin only)
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    # Delete all memberships first
+    db.query(LoungeMembership).filter(
+        LoungeMembership.lounge_id == lounge_id
+    ).delete()
+
+    db.delete(lounge)
+    db.commit()
+
+    return None
+
+
+# =============================================================================
+# Admin User CRUD Operations
+# =============================================================================
+
+@router.post("/users", status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: CreateUserRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Create a new user (admin only)
+    """
+
+    # Check if email already exists
+    existing = db.query(User).filter(User.email == user_data.email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    # Validate role
+    try:
+        role = UserRole(user_data.role)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid role: {user_data.role}"
+        )
+
+    # Create user
+    user = User(
+        email=user_data.email,
+        password_hash=hash_password(user_data.password),
+        name=user_data.name,
+        role=role,
+        email_verified_at=datetime.utcnow() if user_data.email_verified else None
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role.value,
+        "email_verified_at": user.email_verified_at,
+        "created_at": user.created_at
+    }
+
+
+@router.get("/users/{user_id}")
+async def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Get single user details (admin only)
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Get stats
+    lounge_count = db.query(func.count(LoungeMembership.id)).filter(
+        LoungeMembership.user_id == user.id,
+        LoungeMembership.left_at.is_(None)
+    ).scalar()
+
+    note_count = db.query(func.count(Note.id)).filter(
+        Note.user_id == user.id
+    ).scalar()
+
+    subscription = db.query(Subscription).filter(
+        Subscription.user_id == user.id,
+        Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING])
+    ).first()
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role.value,
+        "avatar_url": user.avatar_url,
+        "email_verified_at": user.email_verified_at,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "lounge_count": lounge_count,
+        "note_count": note_count,
+        "subscription_status": subscription.status.value if subscription else None
+    }
+
+
+@router.put("/users/{user_id}")
+async def update_user(
+    user_id: int,
+    user_data: UpdateUserRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Update user details (admin only)
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Update fields if provided
+    if user_data.email is not None:
+        # Check if email already exists
+        existing = db.query(User).filter(
+            User.email == user_data.email,
+            User.id != user_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        user.email = user_data.email
+
+    if user_data.name is not None:
+        user.name = user_data.name
+
+    if user_data.role is not None:
+        try:
+            user.role = UserRole(user_data.role)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role: {user_data.role}"
+            )
+
+    if user_data.email_verified is not None:
+        user.email_verified_at = datetime.utcnow() if user_data.email_verified else None
+
+    if user_data.avatar_url is not None:
+        user.avatar_url = user_data.avatar_url
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role.value,
+        "avatar_url": user.avatar_url,
+        "email_verified_at": user.email_verified_at,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at
+    }
+
+
+# =============================================================================
+# Admin Mentor CRUD Operations
+# =============================================================================
+
+@router.get("/mentors/{mentor_id}")
+async def get_mentor(
+    mentor_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Get single mentor details (admin only)
+    """
+    mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
+
+    if not mentor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mentor not found"
+        )
+
+    lounge_count = db.query(func.count(Lounge.id)).filter(
+        Lounge.mentor_id == mentor.id
+    ).scalar()
+
+    return {
+        "id": mentor.id,
+        "user_id": mentor.user_id,
+        "user_name": mentor.user.name,
+        "user_email": mentor.user.email,
+        "user_avatar": mentor.user.avatar_url,
+        "headline": mentor.headline,
+        "bio": mentor.bio,
+        "intro_video_url": mentor.intro_video_url,
+        "experience_years": mentor.experience_years,
+        "status": mentor.status.value,
+        "created_at": mentor.created_at,
+        "updated_at": mentor.updated_at,
+        "lounge_count": lounge_count
+    }
+
+
+@router.post("/mentors", status_code=status.HTTP_201_CREATED)
+async def create_mentor(
+    mentor_data: CreateMentorRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Create a mentor profile (admin only)
+    """
+    from app.db.models.mentor import MentorStatus
+
+    # Check if user exists
+    user = db.query(User).filter(User.id == mentor_data.user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Check if user already has mentor profile
+    existing = db.query(Mentor).filter(Mentor.user_id == mentor_data.user_id).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User already has a mentor profile"
+        )
+
+    # Validate status
+    try:
+        status_enum = MentorStatus(mentor_data.status)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status: {mentor_data.status}"
+        )
+
+    # Update user role to mentor
+    user.role = UserRole.MENTOR
+
+    # Create mentor profile
+    mentor = Mentor(
+        user_id=mentor_data.user_id,
+        headline=mentor_data.headline,
+        bio=mentor_data.bio,
+        intro_video_url=mentor_data.intro_video_url,
+        experience_years=mentor_data.experience_years,
+        status=status_enum
+    )
+
+    db.add(mentor)
+    db.commit()
+    db.refresh(mentor)
+
+    return {
+        "id": mentor.id,
+        "user_id": mentor.user_id,
+        "user_name": user.name,
+        "user_email": user.email,
+        "headline": mentor.headline,
+        "bio": mentor.bio,
+        "intro_video_url": mentor.intro_video_url,
+        "experience_years": mentor.experience_years,
+        "status": mentor.status.value,
+        "created_at": mentor.created_at
+    }
+
+
+@router.put("/mentors/{mentor_id}")
+async def update_mentor(
+    mentor_id: int,
+    mentor_data: UpdateMentorRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Update mentor details (admin only)
+    """
+    from app.db.models.mentor import MentorStatus
+
+    mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
+
+    if not mentor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mentor not found"
+        )
+
+    # Update fields if provided
+    if mentor_data.headline is not None:
+        mentor.headline = mentor_data.headline
+
+    if mentor_data.bio is not None:
+        mentor.bio = mentor_data.bio
+
+    if mentor_data.intro_video_url is not None:
+        mentor.intro_video_url = mentor_data.intro_video_url
+
+    if mentor_data.experience_years is not None:
+        mentor.experience_years = mentor_data.experience_years
+
+    if mentor_data.status is not None:
+        try:
+            mentor.status = MentorStatus(mentor_data.status)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {mentor_data.status}"
+            )
+
+    db.commit()
+    db.refresh(mentor)
+
+    return {
+        "id": mentor.id,
+        "user_id": mentor.user_id,
+        "user_name": mentor.user.name,
+        "user_email": mentor.user.email,
+        "headline": mentor.headline,
+        "bio": mentor.bio,
+        "intro_video_url": mentor.intro_video_url,
+        "experience_years": mentor.experience_years,
+        "status": mentor.status.value,
+        "created_at": mentor.created_at,
+        "updated_at": mentor.updated_at
+    }
+
+
+@router.delete("/mentors/{mentor_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_mentor(
+    mentor_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Delete mentor profile (admin only)
+    """
+    mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
+
+    if not mentor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mentor not found"
+        )
+
+    # Revert user role to member
+    mentor.user.role = UserRole.MEMBER
+
+    db.delete(mentor)
+    db.commit()
+
+    return None

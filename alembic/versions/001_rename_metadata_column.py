@@ -17,11 +17,13 @@ depends_on = None
 
 def upgrade():
     # Rename column metadata to message_metadata
-    op.alter_column('chat_messages', 'metadata', 
-                    new_column_name='message_metadata')
+    op.alter_column('chat_messages', 'metadata',
+                    new_column_name='message_metadata',
+                    existing_type=sa.JSON())
 
 
 def downgrade():
     # Revert: rename message_metadata back to metadata
     op.alter_column('chat_messages', 'message_metadata',
-                    new_column_name='metadata')
+                    new_column_name='metadata',
+                    existing_type=sa.JSON())

@@ -34,7 +34,7 @@ class ChatThread(Base):
     lounge_id = Column(Integer, ForeignKey("lounges.id"), nullable=True)
     title = Column(String(255), nullable=True)
     status = Column(
-        SQLEnum(ThreadStatus),
+        SQLEnum(ThreadStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=ThreadStatus.OPEN,
         nullable=False
     )
@@ -77,7 +77,7 @@ class ChatMessage(Base):
     
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     thread_id = Column(Integer, ForeignKey("chat_threads.id"), nullable=False)
-    sender_type = Column(SQLEnum(SenderType), nullable=False)
+    sender_type = Column(SQLEnum(SenderType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     content = Column(Text, nullable=False)
     message_metadata = Column(JSON, nullable=True)  # For AI model info, tokens, etc. (renamed from metadata)

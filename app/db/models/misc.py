@@ -33,9 +33,9 @@ class Notification(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     type = Column(String(100), nullable=False)  # e.g., "capsule_unlocked", "new_message"
     data = Column(JSON, nullable=True)  # Additional notification data
-    channel = Column(SQLEnum(NotificationChannel), nullable=False)
+    channel = Column(SQLEnum(NotificationChannel, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     status = Column(
-        SQLEnum(NotificationStatus),
+        SQLEnum(NotificationStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=NotificationStatus.QUEUED,
         nullable=False
     )
@@ -130,9 +130,9 @@ class ComplianceRequest(Base):
     
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    request_type = Column(SQLEnum(RequestType), nullable=False)
+    request_type = Column(SQLEnum(RequestType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     status = Column(
-        SQLEnum(RequestStatus),
+        SQLEnum(RequestStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=RequestStatus.PENDING,
         nullable=False
     )

@@ -159,17 +159,18 @@ async def create_lounge(
             detail="Lounge with this slug already exists"
         )
     
-    # Verify category exists
-    category = db.query(Category).filter(
-        Category.id == lounge_data.category_id
-    ).first()
-    
-    if not category:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Category not found"
-        )
-    
+    # Verify category exists (if provided)
+    if lounge_data.category_id:
+        category = db.query(Category).filter(
+            Category.id == lounge_data.category_id
+        ).first()
+
+        if not category:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Category not found"
+            )
+
     # Create lounge
     lounge = Lounge(
         mentor_id=mentor.id,

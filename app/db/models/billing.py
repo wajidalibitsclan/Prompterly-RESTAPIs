@@ -49,7 +49,7 @@ class SubscriptionPlan(Base):
     slug = Column(String(255), unique=True, nullable=False, index=True)
     stripe_price_id = Column(String(255), nullable=False)
     price_cents = Column(Integer, nullable=False)
-    billing_interval = Column(SQLEnum(BillingInterval), nullable=False)
+    billing_interval = Column(SQLEnum(BillingInterval, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     features = Column(JSON, nullable=True)  # Array of feature strings
     is_active = Column(Boolean, default=True, nullable=False)
     
@@ -89,7 +89,7 @@ class Subscription(Base):
     plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=False)
     stripe_subscription_id = Column(String(255), nullable=False, unique=True)
     status = Column(
-        SQLEnum(SubscriptionStatus),
+        SQLEnum(SubscriptionStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=SubscriptionStatus.TRIALING,
         nullable=False
     )
@@ -132,12 +132,12 @@ class Payment(Base):
     
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    provider = Column(SQLEnum(PaymentProvider), nullable=False)
+    provider = Column(SQLEnum(PaymentProvider, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     provider_payment_id = Column(String(255), nullable=False, unique=True)
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String(3), default="USD", nullable=False)
     status = Column(
-        SQLEnum(PaymentStatus),
+        SQLEnum(PaymentStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=PaymentStatus.PENDING,
         nullable=False
     )

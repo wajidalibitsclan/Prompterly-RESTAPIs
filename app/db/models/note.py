@@ -70,7 +70,7 @@ class TimeCapsule(Base):
     content = Column(Text, nullable=False)
     unlock_at = Column(DateTime, nullable=False)
     status = Column(
-        SQLEnum(CapsuleStatus),
+        SQLEnum(CapsuleStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=CapsuleStatus.LOCKED,
         nullable=False
     )

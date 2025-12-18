@@ -33,7 +33,7 @@ class Mentor(Base):
     intro_video_url = Column(String(500), nullable=True)
     experience_years = Column(Integer, default=0)
     status = Column(
-        SQLEnum(MentorStatus),
+        SQLEnum(MentorStatus, values_callable=lambda obj: [e.value for e in obj]),
         default=MentorStatus.PENDING,
         nullable=False
     )

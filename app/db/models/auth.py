@@ -20,7 +20,7 @@ class OAuthAccount(Base):
     
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    provider = Column(SQLEnum(OAuthProvider), nullable=False)
+    provider = Column(SQLEnum(OAuthProvider, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     provider_user_id = Column(String(255), nullable=False)
     access_token = Column(Text, nullable=True)
     refresh_token = Column(Text, nullable=True)

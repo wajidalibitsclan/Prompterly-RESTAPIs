@@ -202,7 +202,7 @@ async def list_prompts(
             category_id=p.category_id,
             category_name=p.category.name if p.category else None,
             lounge_id=p.lounge_id,
-            lounge_name=p.lounge.name if p.lounge else None,
+            lounge_name=p.lounge.title if p.lounge else None,
             created_by_name=p.created_by.name if p.created_by else None
         ) for p in prompts
     ]

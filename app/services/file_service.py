@@ -182,8 +182,9 @@ class FileService:
                     ExpiresIn=expiration
                 )
             else:
-                # Local storage - return relative URL to be served by FastAPI
-                url = f"/files/{file.storage_path}"
+                # Local storage - return absolute URL to be served by FastAPI
+                base_url = settings.BASE_URL.rstrip('/')
+                url = f"{base_url}/files/{file.storage_path}"
 
             return url
 
