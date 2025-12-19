@@ -2,7 +2,7 @@
 User management API endpoints
 Handles user profile, password changes, activity logs
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import List
@@ -16,6 +16,7 @@ from app.schemas.auth import (
     UserUpdate,
     PasswordChange
 )
+from app.services.file_service import file_service
 
 router = APIRouter()
 
@@ -60,6 +61,90 @@ async def update_current_user_profile(
     return current_user
 
 
+@router.post("/me/avatar", response_model=UserResponse)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload user avatar/profile picture
+
+    - Accepts image files (jpg, jpeg, png, gif, webp)
+    - Max file size: 5MB
+    - Returns updated user profile with new avatar_url
+    """
+    # Validate file type
+    allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
+        )
+
+    # Validate file extension
+    filename = file.filename or ""
+    file_ext = filename.split('.')[-1].lower() if '.' in filename else ''
+    allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file extension. Allowed: {', '.join(allowed_extensions)}"
+        )
+
+    try:
+        # Upload file to storage
+        file_record = await file_service.upload_file(
+            file=file,
+            user_id=current_user.id,
+            db=db,
+            folder="avatars"
+        )
+
+        # Generate URL for the uploaded file
+        avatar_url = await file_service.get_file_url(file_record.id, db)
+
+        # Update user's avatar_url
+        current_user.avatar_url = avatar_url
+        current_user.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(current_user)
+
+        return current_user
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload avatar"
+        )
+
+
+@router.delete("/me/avatar", response_model=UserResponse)
+async def remove_avatar(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Remove user avatar/profile picture
+
+    - Sets avatar_url to null
+    - Returns updated user profile
+    """
+    current_user.avatar_url = None
+    current_user.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(current_user)
+
+    return current_user
+
+
 @router.patch("/me/password", status_code=status.HTTP_200_OK)
 async def change_password(
     password_data: PasswordChange,
@@ -68,7 +153,7 @@ async def change_password(
 ):
     """
     Change user password
-    
+
     - Validates current password
     - Updates to new password
     - Requires re-authentication
@@ -79,13 +164,13 @@ async def change_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect current password"
         )
-    
+
     # Update password
     current_user.password_hash = hash_password(password_data.new_password)
     current_user.updated_at = datetime.utcnow()
-    
+
     db.commit()
-    
+
     return {"message": "Password changed successfully"}
 
 

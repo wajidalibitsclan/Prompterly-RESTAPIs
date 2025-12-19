@@ -48,12 +48,13 @@ async def get_profile_image_url(lounge: Lounge, db: Session) -> Optional[str]:
     return None
 
 
-@router.get("/", response_model=List[LoungeListResponse])
+@router.get("/")
 async def list_lounges(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    page: int = Query(1, ge=1),
     category_id: Optional[int] = None,
     access_type: Optional[AccessType] = None,
     search: Optional[str] = None,
@@ -61,39 +62,51 @@ async def list_lounges(
 ):
     """
     List all lounges
-    
+
     - Public endpoint (shows only public lounges if not authenticated)
     - Supports filtering by category, access type, search, mentor
     - Returns paginated results
     """
     query = db.query(Lounge).filter(Lounge.is_public_listing == True)
-    
+
     # Category filter
     if category_id:
         query = query.filter(Lounge.category_id == category_id)
-    
+
     # Access type filter
     if access_type:
         query = query.filter(Lounge.access_type == access_type)
-    
+
     # Mentor filter
     if mentor_id:
         query = query.filter(Lounge.mentor_id == mentor_id)
-    
-    # Search filter
+
+    # Search filter - search in title, description, mentor name, and category name
     if search:
         search_term = f"%{search}%"
-        query = query.filter(
+        query = query.outerjoin(Mentor, Lounge.mentor_id == Mentor.id)\
+                     .outerjoin(User, Mentor.user_id == User.id)\
+                     .outerjoin(Category, Lounge.category_id == Category.id)\
+                     .filter(
             or_(
                 Lounge.title.ilike(search_term),
-                Lounge.description.ilike(search_term)
+                Lounge.description.ilike(search_term),
+                User.name.ilike(search_term),
+                Category.name.ilike(search_term)
             )
         )
-    
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Calculate skip from page if page is provided
+    if page > 1:
+        skip = (page - 1) * limit
+
     lounges = query.offset(skip).limit(limit).all()
 
     # Build response with stats
-    result = []
+    items = []
     for lounge in lounges:
         member_count = db.query(func.count(LoungeMembership.id)).filter(
             LoungeMembership.lounge_id == lounge.id,
@@ -105,24 +118,29 @@ async def list_lounges(
 
         profile_image_url = await get_profile_image_url(lounge, db)
 
-        result.append(LoungeListResponse(
-            id=lounge.id,
-            mentor_id=lounge.mentor_id,
-            title=lounge.title,
-            slug=lounge.slug,
-            description=lounge.description,
-            category_id=lounge.category_id,
-            access_type=lounge.access_type,
-            profile_image_url=profile_image_url,
-            created_at=lounge.created_at,
-            mentor_name=lounge.mentor.user.name if lounge.mentor else None,
-            mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,
-            category_name=lounge.category.name if lounge.category else None,
-            member_count=member_count,
-            is_full=is_full
-        ))
+        items.append({
+            "id": lounge.id,
+            "mentor_id": lounge.mentor_id,
+            "title": lounge.title,
+            "slug": lounge.slug,
+            "description": lounge.description,
+            "category_id": lounge.category_id,
+            "access_type": lounge.access_type.value,
+            "profile_image_url": profile_image_url,
+            "created_at": lounge.created_at,
+            "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
+            "mentor_avatar": lounge.mentor.user.avatar_url if lounge.mentor else None,
+            "category_name": lounge.category.name if lounge.category else None,
+            "member_count": member_count,
+            "is_full": is_full
+        })
 
-    return result
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit
+    }
 
 
 @router.post("/", response_model=LoungeResponse, status_code=status.HTTP_201_CREATED)

@@ -33,10 +33,12 @@ from app.db.models.misc import (
     StaticPage,
     FAQ,
     ComplianceRequest,
+    ContactMessage,
     NotificationChannel,
     NotificationStatus,
     RequestType,
-    RequestStatus
+    RequestStatus,
+    ContactMessageStatus
 )
 from app.db.models.knowledge_base import (
     KBCategory,
@@ -94,10 +96,12 @@ __all__ = [
     "StaticPage",
     "FAQ",
     "ComplianceRequest",
+    "ContactMessage",
     "NotificationChannel",
     "NotificationStatus",
     "RequestType",
     "RequestStatus",
+    "ContactMessageStatus",
 
     # Knowledge Base models
     "KBCategory",

@@ -125,9 +125,9 @@ class RequestStatus(str, Enum):
 
 class ComplianceRequest(Base):
     """Compliance request model - GDPR data requests"""
-    
+
     __tablename__ = "compliance_requests"
-    
+
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     request_type = Column(SQLEnum(RequestType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
@@ -137,19 +137,57 @@ class ComplianceRequest(Base):
         nullable=False
     )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     user = relationship("User", back_populates="compliance_requests")
-    
+
     @property
     def is_complete(self) -> bool:
         """Check if request is complete"""
         return self.status in [RequestStatus.DONE, RequestStatus.REJECTED]
-    
+
     def __repr__(self):
         return (
             f"<ComplianceRequest(id={self.id}, "
             f"user_id={self.user_id}, "
             f"type={self.request_type}, "
+            f"status={self.status})>"
+        )
+
+
+class ContactMessageStatus(str, Enum):
+    """Contact message status enumeration"""
+    NEW = "new"
+    READ = "read"
+    REPLIED = "replied"
+    ARCHIVED = "archived"
+
+
+class ContactMessage(Base):
+    """Contact message model - stores contact form submissions"""
+
+    __tablename__ = "contact_messages"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    email = Column(String(255), nullable=False)
+    subject = Column(String(500), nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(
+        SQLEnum(ContactMessageStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=ContactMessageStatus.NEW,
+        nullable=False
+    )
+    ip_address = Column(String(45), nullable=True)  # IPv6 can be up to 45 chars
+    user_agent = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    read_at = Column(DateTime, nullable=True)
+    replied_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return (
+            f"<ContactMessage(id={self.id}, "
+            f"email={self.email}, "
+            f"subject={self.subject[:30]}, "
             f"status={self.status})>"
         )

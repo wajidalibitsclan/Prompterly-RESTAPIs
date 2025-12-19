@@ -12,14 +12,15 @@ class UserManagementResponse(BaseModel):
     email: str
     name: str
     role: str
+    avatar_url: Optional[str] = None
     email_verified_at: Optional[datetime]
     created_at: datetime
-    
+
     # Stats
     lounge_count: int = 0
     note_count: int = 0
     subscription_status: Optional[str] = None
-    
+
     class Config:
         from_attributes = True
 

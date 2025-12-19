@@ -311,7 +311,7 @@ async def root():
 # API Routers
 # =============================================================================
 
-from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin, knowledge_base
+from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin, knowledge_base, contact
 
 # Include API v1 routers
 api_v1_prefix = settings.API_V1_PREFIX
@@ -328,6 +328,7 @@ app.include_router(notifications.router, prefix=f"{api_v1_prefix}/notifications"
 app.include_router(cms.router, prefix=f"{api_v1_prefix}/cms", tags=["CMS"])
 app.include_router(admin.router, prefix=f"{api_v1_prefix}/admin", tags=["Admin"])
 app.include_router(knowledge_base.router, prefix=f"{api_v1_prefix}/knowledge-base", tags=["Knowledge Base"])
+app.include_router(contact.router, prefix=f"{api_v1_prefix}/contact", tags=["Contact"])
 
 logger.info(f"Registered {len(app.routes)} routes")
 

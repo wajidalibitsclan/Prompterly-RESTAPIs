@@ -205,6 +205,7 @@ async def list_users(
             email=user.email,
             name=user.name,
             role=user.role.value,
+            avatar_url=user.avatar_url,
             email_verified_at=user.email_verified_at,
             created_at=user.created_at,
             lounge_count=lounge_count,
