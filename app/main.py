@@ -1,6 +1,6 @@
 """
 Main FastAPI application entry point
-AI Coaching Lounges Platform
+AI Coaching Lounges Platform ---
 """
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
