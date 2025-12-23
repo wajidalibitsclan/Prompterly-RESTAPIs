@@ -198,3 +198,50 @@ class PaginatedMentorsResponse(BaseModel):
     page: int
     limit: int
     pages: int
+
+
+# =============================================================================
+# Subscription Management Schemas
+# =============================================================================
+
+class LoungeSubscriptionInfo(BaseModel):
+    """Schema for lounge info in subscription context"""
+    id: int
+    title: str
+    slug: str
+    access_type: str
+    mentor_name: Optional[str] = None
+    profile_image_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UserSubscriptionResponse(BaseModel):
+    """Schema for user subscription details"""
+    subscription_id: int
+    user_id: int
+    user_name: str
+    user_email: str
+    user_avatar: Optional[str] = None
+    plan_id: int
+    plan_name: str
+    plan_price_cents: int
+    billing_interval: str
+    status: str
+    started_at: datetime
+    renews_at: datetime
+    canceled_at: Optional[datetime] = None
+    lounges: List[LoungeSubscriptionInfo] = []
+
+    class Config:
+        from_attributes = True
+
+
+class PaginatedSubscriptionsResponse(BaseModel):
+    """Paginated response for subscriptions list"""
+    items: List[UserSubscriptionResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int

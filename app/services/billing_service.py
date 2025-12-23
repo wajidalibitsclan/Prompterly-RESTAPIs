@@ -18,6 +18,7 @@ from app.db.models.billing import (
     PaymentStatus
 )
 from app.db.models.user import User
+from app.db.models.lounge import LoungeMembership, MembershipRole
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class BillingService:
         self,
         user_id: int,
         plan_id: int,
+        lounge_id: Optional[int],
         success_url: str,
         cancel_url: str,
         db: Session
@@ -113,7 +115,8 @@ class BillingService:
                 cancel_url=cancel_url,
                 metadata={
                     'user_id': str(user_id),
-                    'plan_id': str(plan_id)
+                    'plan_id': str(plan_id),
+                    'lounge_id': str(lounge_id) if lounge_id else ''
                 }
             )
             
@@ -171,7 +174,7 @@ class BillingService:
     ):
         """
         Handle successful checkout completion
-        
+
         Args:
             session: Stripe session object
             db: Database session
@@ -179,11 +182,13 @@ class BillingService:
         try:
             user_id = int(session['metadata']['user_id'])
             plan_id = int(session['metadata']['plan_id'])
-            
+            lounge_id_str = session['metadata'].get('lounge_id', '')
+            lounge_id = int(lounge_id_str) if lounge_id_str else None
+
             # Get subscription from Stripe
             subscription_id = session['subscription']
             stripe_sub = stripe.Subscription.retrieve(subscription_id)
-            
+
             # Create subscription record
             subscription = Subscription(
                 user_id=user_id,
@@ -193,15 +198,33 @@ class BillingService:
                 started_at=datetime.fromtimestamp(stripe_sub['current_period_start']),
                 renews_at=datetime.fromtimestamp(stripe_sub['current_period_end'])
             )
-            
+
             db.add(subscription)
             db.commit()
-            
+
             logger.info(f"Created subscription {subscription.id} for user {user_id}")
-            
-            # TODO: Send welcome email
-            # TODO: Grant access to paid features
-        
+
+            # Create lounge membership if lounge_id is provided
+            if lounge_id:
+                # Check if membership already exists
+                existing_membership = db.query(LoungeMembership).filter(
+                    LoungeMembership.user_id == user_id,
+                    LoungeMembership.lounge_id == lounge_id,
+                    LoungeMembership.left_at.is_(None)
+                ).first()
+
+                if not existing_membership:
+                    membership = LoungeMembership(
+                        user_id=user_id,
+                        lounge_id=lounge_id,
+                        role=MembershipRole.MEMBER
+                    )
+                    db.add(membership)
+                    db.commit()
+                    logger.info(f"Created lounge membership for user {user_id} in lounge {lounge_id}")
+                else:
+                    logger.info(f"User {user_id} already a member of lounge {lounge_id}")
+
         except Exception as e:
             logger.error(f"Error handling checkout completion: {str(e)}")
             raise

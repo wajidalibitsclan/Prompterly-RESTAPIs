@@ -48,6 +48,71 @@ async def get_profile_image_url(lounge: Lounge, db: Session) -> Optional[str]:
     return None
 
 
+@router.get("/my")
+async def get_my_lounges(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """
+    Get lounges the current user is a member of
+
+    - Requires authentication
+    - Returns lounges user has joined or subscribed to
+    """
+    # Get user's memberships
+    memberships = db.query(LoungeMembership).filter(
+        LoungeMembership.user_id == current_user.id,
+        LoungeMembership.left_at.is_(None)
+    ).offset(skip).limit(limit).all()
+
+    lounge_ids = [m.lounge_id for m in memberships]
+
+    if not lounge_ids:
+        return {
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "limit": limit
+        }
+
+    lounges = db.query(Lounge).filter(Lounge.id.in_(lounge_ids)).all()
+
+    items = []
+    for lounge in lounges:
+        member_count = db.query(func.count(LoungeMembership.id)).filter(
+            LoungeMembership.lounge_id == lounge.id,
+            LoungeMembership.left_at.is_(None)
+        ).scalar()
+
+        profile_image_url = await get_profile_image_url(lounge, db)
+
+        items.append({
+            "id": lounge.id,
+            "mentor_id": lounge.mentor_id,
+            "title": lounge.title,
+            "slug": lounge.slug,
+            "description": lounge.description,
+            "category_id": lounge.category_id,
+            "access_type": lounge.access_type.value,
+            "profile_image_url": profile_image_url,
+            "created_at": lounge.created_at,
+            "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
+            "mentor_avatar": lounge.mentor.user.avatar_url if lounge.mentor else None,
+            "category_name": lounge.category.name if lounge.category else None,
+            "member_count": member_count,
+            "is_member": True
+        })
+
+    return {
+        "items": items,
+        "total": len(items),
+        "page": 1,
+        "limit": limit
+    }
+
+
 @router.get("/")
 async def list_lounges(
     db: Session = Depends(get_db),
@@ -451,9 +516,9 @@ async def delete_lounge(
 @router.post("/{lounge_id}/join", response_model=LoungeMemberResponse)
 async def join_lounge(
     lounge_id: int,
-    join_request: JoinLoungeRequest,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    join_request: Optional[JoinLoungeRequest] = None
 ):
     """
     Join lounge

@@ -27,6 +27,7 @@ class SubscriptionPlanResponse(BaseModel):
 class CheckoutSessionCreate(BaseModel):
     """Schema for creating checkout session"""
     plan_id: int
+    lounge_id: Optional[int] = None
     success_url: str
     cancel_url: str
 

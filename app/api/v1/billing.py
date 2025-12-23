@@ -70,7 +70,7 @@ async def create_checkout(
 ):
     """
     Create Stripe checkout session
-    
+
     - Requires authentication
     - Creates checkout for subscription
     - Redirects to Stripe hosted page
@@ -79,6 +79,7 @@ async def create_checkout(
         session_data = await billing_service.create_checkout_session(
             user_id=current_user.id,
             plan_id=checkout_data.plan_id,
+            lounge_id=checkout_data.lounge_id,
             success_url=checkout_data.success_url,
             cancel_url=checkout_data.cancel_url,
             db=db
@@ -335,7 +336,7 @@ async def list_invoices(
 ):
     """
     List invoices
-    
+
     - Returns Stripe invoices for user
     - Includes download URLs
     """
@@ -344,16 +345,24 @@ async def list_invoices(
             user_id=current_user.id,
             db=db
         )
-        
+
         if not subscription or not subscription.stripe_subscription_id:
             return []
-        
+
+        # Check if the subscription ID looks like a real Stripe subscription ID
+        # Real Stripe subscription IDs start with "sub_" followed by alphanumeric characters
+        stripe_sub_id = subscription.stripe_subscription_id
+        if not stripe_sub_id.startswith("sub_") or len(stripe_sub_id) < 20:
+            # This is likely a placeholder/test subscription ID, return empty
+            logger.info(f"Subscription ID {stripe_sub_id} appears to be a placeholder, skipping invoice fetch")
+            return []
+
         # Get invoices from Stripe
         invoices = stripe.Invoice.list(
-            subscription=subscription.stripe_subscription_id,
+            subscription=stripe_sub_id,
             limit=limit
         )
-        
+
         result = []
         for invoice in invoices.data:
             result.append({
@@ -367,9 +376,14 @@ async def list_invoices(
                 'invoice_pdf': invoice.invoice_pdf,
                 'hosted_invoice_url': invoice.hosted_invoice_url
             })
-        
+
         return result
-    
+
+    except stripe.error.InvalidRequestError as e:
+        # Handle invalid subscription ID (not found in Stripe)
+        logger.warning(f"Invalid Stripe subscription ID: {str(e)}")
+        return []
+
     except Exception as e:
         logger.error(f"Error fetching invoices: {str(e)}")
         raise HTTPException(
