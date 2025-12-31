@@ -105,16 +105,16 @@ class KnowledgeBaseService:
     # ============== Prompt Operations ==============
 
     async def create_prompt(
-        self, db: Session, data: dict, admin_id: int
+        self, db: Session, data: dict, admin_id: int, skip_embedding: bool = False
     ) -> KBPrompt:
-        """Create a new prompt and generate embedding"""
+        """Create a new prompt and optionally generate embedding"""
         prompt = KBPrompt(**data, created_by_id=admin_id)
         db.add(prompt)
         db.commit()
         db.refresh(prompt)
 
-        # Generate embedding if included in RAG
-        if prompt.is_included_in_rag:
+        # Generate embedding if included in RAG (unless skipped for background processing)
+        if prompt.is_included_in_rag and not skip_embedding:
             await self._update_prompt_embedding(db, prompt)
 
         return prompt

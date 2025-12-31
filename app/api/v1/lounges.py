@@ -354,6 +354,9 @@ async def get_lounge(
 
     profile_image_url = await get_profile_image_url(lounge, db)
 
+    # Get pricing (import constants)
+    from app.services.billing_service import LOUNGE_MONTHLY_PRICE_CENTS, LOUNGE_YEARLY_PRICE_CENTS
+
     return LoungeResponse(
         id=lounge.id,
         mentor_id=lounge.mentor_id,
@@ -367,6 +370,11 @@ async def get_lounge(
         is_public_listing=lounge.is_public_listing,
         profile_image_url=profile_image_url,
         created_at=lounge.created_at,
+        stripe_product_id=lounge.stripe_product_id,
+        stripe_monthly_price_id=lounge.stripe_monthly_price_id,
+        stripe_yearly_price_id=lounge.stripe_yearly_price_id,
+        monthly_price=LOUNGE_MONTHLY_PRICE_CENTS if lounge.stripe_monthly_price_id else None,
+        yearly_price=LOUNGE_YEARLY_PRICE_CENTS if lounge.stripe_yearly_price_id else None,
         mentor_name=lounge.mentor.user.name if lounge.mentor else None,
         mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,
         category_name=lounge.category.name if lounge.category else None,

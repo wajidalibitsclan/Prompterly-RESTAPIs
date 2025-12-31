@@ -72,20 +72,23 @@ class ChatThread(Base):
 
 class ChatMessage(Base):
     """Chat message model - individual messages in threads"""
-    
+
     __tablename__ = "chat_messages"
-    
+
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     thread_id = Column(Integer, ForeignKey("chat_threads.id"), nullable=False)
     sender_type = Column(SQLEnum(SenderType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reply_to_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True)  # Reply to another message
     content = Column(Text, nullable=False)
     message_metadata = Column(JSON, nullable=True)  # For AI model info, tokens, etc. (renamed from metadata)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+    edited_at = Column(DateTime, nullable=True)  # Timestamp when message was edited
+
     # Relationships
     thread = relationship("ChatThread", back_populates="messages")
     sender_user = relationship("User", foreign_keys=[user_id])
+    reply_to = relationship("ChatMessage", remote_side=[id], foreign_keys=[reply_to_id])  # Self-referential
     attachments = relationship(
         "MessageAttachment",
         back_populates="message",

@@ -2,25 +2,29 @@
 Chat service for managing conversations and AI responses
 Includes RAG (Retrieval Augmented Generation) support
 """
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any, AsyncGenerator
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import logging
+import json
 
 from app.db.models.chat import ChatThread, ChatMessage, SenderType, ThreadStatus
 from app.db.models.note import Note
 from app.db.models.lounge import Lounge, LoungeMembership
+from app.db.models.mentor import Mentor
 from app.services.ai_service import ai_service
+from app.services.knowledge_base_service import knowledge_base_service
 
 logger = logging.getLogger(__name__)
 
 
 class ChatService:
     """Service for managing chat threads and messages"""
-    
+
     def __init__(self):
         """Initialize chat service"""
         self.ai_service = ai_service
+        self.kb_service = knowledge_base_service
     
     async def create_thread(
         self,
@@ -80,11 +84,12 @@ class ChatService:
         db: Session,
         generate_ai_response: bool = True,
         use_rag: bool = True,
-        use_anthropic: bool = False
+        use_anthropic: bool = False,
+        reply_to_id: Optional[int] = None
     ) -> Tuple[ChatMessage, Optional[ChatMessage]]:
         """
         Send message and optionally generate AI response
-        
+
         Args:
             thread_id: Thread ID
             user_id: User ID
@@ -93,7 +98,8 @@ class ChatService:
             generate_ai_response: Whether to generate AI response
             use_rag: Whether to use RAG for context
             use_anthropic: Use Anthropic Claude instead of OpenAI
-            
+            reply_to_id: Optional ID of message being replied to
+
         Returns:
             Tuple of (user_message, ai_message or None)
         """
@@ -102,44 +108,70 @@ class ChatService:
             ChatThread.id == thread_id,
             ChatThread.user_id == user_id
         ).first()
-        
+
         if not thread:
             raise ValueError("Thread not found or access denied")
-        
+
         if thread.status == ThreadStatus.ARCHIVED:
             raise ValueError("Cannot send messages to archived thread")
-        
+
+        # Verify reply_to message exists in this thread if provided
+        if reply_to_id:
+            reply_to_msg = db.query(ChatMessage).filter(
+                ChatMessage.id == reply_to_id,
+                ChatMessage.thread_id == thread_id
+            ).first()
+            if not reply_to_msg:
+                raise ValueError("Reply-to message not found in this thread")
+
         # Create user message
         user_message = ChatMessage(
             thread_id=thread_id,
             sender_type=SenderType.USER,
             user_id=user_id,
-            content=content
+            content=content,
+            reply_to_id=reply_to_id
         )
-        
+
         db.add(user_message)
         db.commit()
         db.refresh(user_message)
-        
+
         ai_message = None
-        
+
         if generate_ai_response:
             try:
                 # Get conversation history
                 history = await self._get_conversation_history(thread_id, db)
-                
+
+                # Get lounge context (mentor info, system prompt)
+                lounge_context = await self._get_lounge_context(thread.lounge_id, db)
+
                 # Get RAG context if enabled
-                context = None
+                rag_context = None
+                rag_sources = []
                 if use_rag:
-                    context = await self._get_rag_context(user_id, content, db)
-                
+                    rag_context, rag_sources = await self._get_rag_context(
+                        user_id=user_id,
+                        query=content,
+                        db=db,
+                        lounge_id=thread.lounge_id
+                    )
+
+                # Build system prompt with lounge context and RAG
+                system_prompt = self._build_system_prompt(lounge_context, rag_context)
+
                 # Generate AI response
                 ai_response, metadata = await self.ai_service.generate_chat_response(
                     messages=history,
-                    context=context,
+                    context=system_prompt,
                     use_anthropic=use_anthropic
                 )
-                
+
+                # Add RAG sources to metadata
+                if rag_sources:
+                    metadata["rag_sources"] = rag_sources
+
                 # Create AI message
                 ai_message = ChatMessage(
                     thread_id=thread_id,
@@ -147,17 +179,158 @@ class ChatService:
                     content=ai_response,
                     message_metadata=metadata
                 )
-                
+
                 db.add(ai_message)
                 db.commit()
                 db.refresh(ai_message)
-                
+
             except Exception as e:
                 logger.error(f"Error generating AI response: {str(e)}")
                 # Continue even if AI response fails
-        
+
         return user_message, ai_message
-    
+
+    async def send_message_stream(
+        self,
+        thread_id: int,
+        user_id: int,
+        content: str,
+        db: Session,
+        use_rag: bool = True,
+        reply_to_id: Optional[int] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Send message and stream AI response via SSE
+
+        Args:
+            thread_id: Thread ID
+            user_id: User ID
+            content: Message content
+            db: Database session
+            use_rag: Whether to use RAG for context
+            reply_to_id: Optional ID of message being replied to
+
+        Yields:
+            Dict with event type and data for SSE
+        """
+        # Verify thread access
+        thread = db.query(ChatThread).filter(
+            ChatThread.id == thread_id,
+            ChatThread.user_id == user_id
+        ).first()
+
+        if not thread:
+            raise ValueError("Thread not found or access denied")
+
+        if thread.status == ThreadStatus.ARCHIVED:
+            raise ValueError("Cannot send messages to archived thread")
+
+        # Verify reply_to message exists if provided
+        if reply_to_id:
+            reply_to_msg = db.query(ChatMessage).filter(
+                ChatMessage.id == reply_to_id,
+                ChatMessage.thread_id == thread_id
+            ).first()
+            if not reply_to_msg:
+                raise ValueError("Reply-to message not found in this thread")
+
+        # Create user message
+        user_message = ChatMessage(
+            thread_id=thread_id,
+            sender_type=SenderType.USER,
+            user_id=user_id,
+            content=content,
+            reply_to_id=reply_to_id
+        )
+
+        db.add(user_message)
+        db.commit()
+        db.refresh(user_message)
+
+        # Yield user message event
+        yield {
+            "event": "user_message",
+            "data": {
+                "id": user_message.id,
+                "thread_id": user_message.thread_id,
+                "sender_type": "user",
+                "content": user_message.content,
+                "created_at": user_message.created_at.isoformat()
+            }
+        }
+
+        try:
+            # Get conversation history
+            history = await self._get_conversation_history(thread_id, db)
+
+            # Get lounge context
+            lounge_context = await self._get_lounge_context(thread.lounge_id, db)
+
+            # Get RAG context if enabled
+            rag_context = None
+            rag_sources = []
+            if use_rag:
+                rag_context, rag_sources = await self._get_rag_context(
+                    user_id=user_id,
+                    query=content,
+                    db=db,
+                    lounge_id=thread.lounge_id
+                )
+
+            # Build system prompt
+            system_prompt = self._build_system_prompt(lounge_context, rag_context)
+
+            # Stream AI response
+            full_response = ""
+            async for chunk in self.ai_service.generate_chat_response_stream(
+                messages=history,
+                context=system_prompt
+            ):
+                full_response += chunk
+                yield {
+                    "event": "ai_chunk",
+                    "data": {"content": chunk}
+                }
+
+            # Create AI message after streaming completes
+            metadata = {
+                "model": "gpt-4",
+                "streamed": True
+            }
+            if rag_sources:
+                metadata["rag_sources"] = rag_sources
+
+            ai_message = ChatMessage(
+                thread_id=thread_id,
+                sender_type=SenderType.AI,
+                content=full_response,
+                message_metadata=metadata
+            )
+
+            db.add(ai_message)
+            db.commit()
+            db.refresh(ai_message)
+
+            # Yield completion event with full message
+            yield {
+                "event": "ai_complete",
+                "data": {
+                    "id": ai_message.id,
+                    "thread_id": ai_message.thread_id,
+                    "sender_type": "ai",
+                    "content": ai_message.content,
+                    "created_at": ai_message.created_at.isoformat(),
+                    "metadata": metadata
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error generating streaming response: {str(e)}")
+            yield {
+                "event": "error",
+                "data": {"error": str(e)}
+            }
+
     async def _get_conversation_history(
         self,
         thread_id: int,
@@ -199,22 +372,182 @@ class ChatService:
         
         return history
     
+    async def _get_lounge_context(
+        self,
+        lounge_id: Optional[int],
+        db: Session
+    ) -> Dict[str, Any]:
+        """
+        Get lounge context including mentor information
+
+        Args:
+            lounge_id: Lounge ID (optional)
+            db: Database session
+
+        Returns:
+            Dictionary with lounge and mentor context
+        """
+        context = {
+            "mentor_name": "AI Coach",
+            "mentor_bio": None,
+            "lounge_title": None,
+            "lounge_description": None,
+            "category_name": None
+        }
+
+        if not lounge_id:
+            return context
+
+        try:
+            lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+            if lounge:
+                context["lounge_title"] = lounge.title
+                context["lounge_description"] = lounge.description
+
+                if lounge.category:
+                    context["category_name"] = lounge.category.name
+
+                if lounge.mentor:
+                    mentor = lounge.mentor
+                    if mentor.user:
+                        context["mentor_name"] = mentor.user.name or "AI Coach"
+                    context["mentor_bio"] = mentor.bio
+
+        except Exception as e:
+            logger.error(f"Error getting lounge context: {str(e)}")
+
+        return context
+
+    def _build_system_prompt(
+        self,
+        lounge_context: Dict[str, Any],
+        rag_context: Optional[str]
+    ) -> str:
+        """
+        Build system prompt with lounge context and RAG knowledge
+
+        Args:
+            lounge_context: Lounge and mentor information
+            rag_context: RAG retrieved context
+
+        Returns:
+            Complete system prompt
+        """
+        prompt_parts = []
+
+        # Base coaching personality
+        mentor_name = lounge_context.get("mentor_name", "AI Coach")
+        prompt_parts.append(f"""You are {mentor_name}, an AI coaching assistant in the Prompterly platform.
+            You provide thoughtful, empathetic, and actionable coaching guidance.
+            Your role is to help users achieve their personal and professional goals.""")
+
+        # Add lounge-specific context
+        lounge_title = lounge_context.get("lounge_title")
+        if lounge_title:
+            prompt_parts.append(f"\nYou are operating in the '{lounge_title}' coaching lounge.")
+
+        lounge_desc = lounge_context.get("lounge_description")
+        if lounge_desc:
+            prompt_parts.append(f"Lounge focus: {lounge_desc}")
+
+        category = lounge_context.get("category_name")
+        if category:
+            prompt_parts.append(f"Specialty area: {category}")
+
+        mentor_bio = lounge_context.get("mentor_bio")
+        if mentor_bio:
+            prompt_parts.append(f"\nMentor background: {mentor_bio}")
+
+        # Add coaching guidelines
+        prompt_parts.append("""
+            Coaching Guidelines:
+            - Be supportive, encouraging, and non-judgmental
+            - Ask clarifying questions when needed to better understand the user's situation
+            - Provide practical, actionable advice
+            - Use the user's name if known
+            - Keep responses conversational but focused
+            - When appropriate, break down advice into clear steps
+            - Acknowledge emotions and validate the user's experiences""")
+
+        # Add RAG context if available
+        if rag_context:
+            prompt_parts.append(f"""
+                Relevant Knowledge Base Information:
+                {rag_context}
+
+                Use the above information to provide more accurate and contextual responses when relevant.""")
+
+        return "\n\n".join(prompt_parts)
+
     async def _get_rag_context(
         self,
         user_id: int,
         query: str,
         db: Session,
-        top_k: int = 3
-    ) -> Optional[str]:
+        lounge_id: Optional[int] = None,
+        top_k: int = 5
+    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
         """
-        Get RAG context from user's notes
-        
+        Get RAG context from knowledge base and user's notes
+
         Args:
             user_id: User ID
             query: Query text
             db: Database session
+            lounge_id: Optional lounge ID for lounge-specific content
             top_k: Number of top results to include
-            
+
+        Returns:
+            Tuple of (context string, sources list)
+        """
+        context_parts = []
+        sources = []
+
+        try:
+            # 1. Get knowledge base context (prompts, documents, FAQs)
+            kb_context, kb_sources = await self.kb_service.get_rag_context(
+                db=db,
+                query=query,
+                max_items=top_k,
+                lounge_id=lounge_id,
+                include_global=True,
+                similarity_threshold=0.6
+            )
+
+            if kb_context:
+                context_parts.append(kb_context)
+                sources.extend(kb_sources)
+
+            # 2. Get relevant user notes
+            notes_context = await self._get_user_notes_context(user_id, query, db)
+            if notes_context:
+                context_parts.append(f"User's Personal Notes:\n{notes_context}")
+                sources.append({"type": "user_notes", "id": None, "title": "Personal Notes"})
+
+        except Exception as e:
+            logger.error(f"Error getting RAG context: {str(e)}")
+
+        if not context_parts:
+            return None, []
+
+        return "\n\n---\n\n".join(context_parts), sources
+
+    async def _get_user_notes_context(
+        self,
+        user_id: int,
+        query: str,
+        db: Session,
+        top_k: int = 2
+    ) -> Optional[str]:
+        """
+        Get context from user's personal notes
+
+        Args:
+            user_id: User ID
+            query: Query text
+            db: Database session
+            top_k: Number of top notes to include
+
         Returns:
             Context string or None
         """
@@ -224,48 +557,39 @@ class ChatService:
                 Note.user_id == user_id,
                 Note.is_included_in_rag == True
             ).all()
-            
+
             if not notes:
                 return None
-            
-            # Create query embedding
-            query_embedding = await self.ai_service.create_embedding(query)
-            
-            # For now, use simple keyword matching
-            # In production, you'd use vector database like Pinecone, Weaviate, etc.
+
+            # Simple keyword matching for note relevance
             relevant_notes = []
             query_lower = query.lower()
-            
+            query_words = set(query_lower.split())
+
             for note in notes:
-                # Simple relevance scoring based on keyword matching
                 content_lower = (note.title + " " + note.content).lower()
-                score = sum(1 for word in query_lower.split() if word in content_lower)
-                
+                # Count matching words
+                score = sum(1 for word in query_words if word in content_lower)
+
                 if score > 0:
                     relevant_notes.append((note, score))
-            
-            # Sort by relevance
-            relevant_notes.sort(key=lambda x: x[1], reverse=True)
-            
-            # Take top_k most relevant notes
-            top_notes = relevant_notes[:top_k]
-            
-            if not top_notes:
+
+            if not relevant_notes:
                 return None
-            
+
+            # Sort by relevance and take top results
+            relevant_notes.sort(key=lambda x: x[1], reverse=True)
+            top_notes = relevant_notes[:top_k]
+
             # Build context string
             context_parts = []
-            for note, score in top_notes:
-                context_parts.append(
-                    f"Note: {note.title}\n{note.content[:500]}"  # Limit length
-                )
-            
-            context = "\n\n---\n\n".join(context_parts)
-            
-            return context
-        
+            for note, _ in top_notes:
+                context_parts.append(f"- {note.title}: {note.content[:300]}")
+
+            return "\n".join(context_parts)
+
         except Exception as e:
-            logger.error(f"Error getting RAG context: {str(e)}")
+            logger.error(f"Error getting user notes context: {str(e)}")
             return None
     
     async def get_thread_messages(
@@ -373,8 +697,332 @@ class ChatService:
         
         db.delete(thread)
         db.commit()
-        
+
         return True
+
+    async def edit_message(
+        self,
+        message_id: int,
+        user_id: int,
+        new_content: str,
+        db: Session,
+        regenerate_ai: bool = False
+    ) -> Tuple[ChatMessage, Optional[ChatMessage]]:
+        """
+        Edit a user's message and optionally regenerate AI response
+
+        Args:
+            message_id: Message ID to edit
+            user_id: User ID (for authorization)
+            new_content: New message content
+            db: Database session
+            regenerate_ai: Whether to regenerate AI response after edit
+
+        Returns:
+            Tuple of (edited_message, new_ai_message or None)
+        """
+        from datetime import datetime
+
+        # Get the message
+        message = db.query(ChatMessage).filter(
+            ChatMessage.id == message_id
+        ).first()
+
+        if not message:
+            raise ValueError("Message not found")
+
+        # Verify user owns this message
+        if message.sender_type != SenderType.USER or message.user_id != user_id:
+            raise ValueError("You can only edit your own messages")
+
+        # Verify thread access
+        thread = db.query(ChatThread).filter(
+            ChatThread.id == message.thread_id,
+            ChatThread.user_id == user_id
+        ).first()
+
+        if not thread:
+            raise ValueError("Thread not found or access denied")
+
+        # Update the message
+        message.content = new_content
+        message.edited_at = datetime.utcnow()
+        db.commit()
+        db.refresh(message)
+
+        ai_message = None
+
+        if regenerate_ai:
+            # Delete any AI response that came after this message
+            ai_responses = db.query(ChatMessage).filter(
+                ChatMessage.thread_id == message.thread_id,
+                ChatMessage.sender_type == SenderType.AI,
+                ChatMessage.created_at > message.created_at
+            ).order_by(ChatMessage.created_at.asc()).all()
+
+            # Delete only the immediate next AI response
+            if ai_responses:
+                db.delete(ai_responses[0])
+                db.commit()
+
+            # Generate new AI response
+            ai_message = await self._generate_ai_response_for_message(
+                thread=thread,
+                user_message=message,
+                db=db
+            )
+
+        return message, ai_message
+
+    async def regenerate_response(
+        self,
+        message_id: int,
+        user_id: int,
+        db: Session
+    ) -> ChatMessage:
+        """
+        Regenerate AI response for a specific user message
+
+        Args:
+            message_id: The user message ID to regenerate response for
+            user_id: User ID (for authorization)
+            db: Database session
+
+        Returns:
+            New AI message
+        """
+        # Get the user message
+        user_message = db.query(ChatMessage).filter(
+            ChatMessage.id == message_id
+        ).first()
+
+        if not user_message:
+            raise ValueError("Message not found")
+
+        # Verify it's a user message
+        if user_message.sender_type != SenderType.USER:
+            raise ValueError("Can only regenerate response for user messages")
+
+        # Verify thread access
+        thread = db.query(ChatThread).filter(
+            ChatThread.id == user_message.thread_id,
+            ChatThread.user_id == user_id
+        ).first()
+
+        if not thread:
+            raise ValueError("Thread not found or access denied")
+
+        # Find and delete the existing AI response (the one right after this user message)
+        existing_ai = db.query(ChatMessage).filter(
+            ChatMessage.thread_id == thread.id,
+            ChatMessage.sender_type == SenderType.AI,
+            ChatMessage.created_at > user_message.created_at
+        ).order_by(ChatMessage.created_at.asc()).first()
+
+        if existing_ai:
+            db.delete(existing_ai)
+            db.commit()
+
+        # Generate new AI response
+        ai_message = await self._generate_ai_response_for_message(
+            thread=thread,
+            user_message=user_message,
+            db=db
+        )
+
+        return ai_message
+
+    async def regenerate_response_stream(
+        self,
+        message_id: int,
+        user_id: int,
+        db: Session
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Regenerate AI response with streaming for a specific user message
+
+        Args:
+            message_id: The user message ID to regenerate response for
+            user_id: User ID (for authorization)
+            db: Database session
+
+        Yields:
+            Dict with event type and data for SSE
+        """
+        # Get the user message
+        user_message = db.query(ChatMessage).filter(
+            ChatMessage.id == message_id
+        ).first()
+
+        if not user_message:
+            raise ValueError("Message not found")
+
+        # Verify it's a user message
+        if user_message.sender_type != SenderType.USER:
+            raise ValueError("Can only regenerate response for user messages")
+
+        # Verify thread access
+        thread = db.query(ChatThread).filter(
+            ChatThread.id == user_message.thread_id,
+            ChatThread.user_id == user_id
+        ).first()
+
+        if not thread:
+            raise ValueError("Thread not found or access denied")
+
+        # Find and delete the existing AI response
+        existing_ai = db.query(ChatMessage).filter(
+            ChatMessage.thread_id == thread.id,
+            ChatMessage.sender_type == SenderType.AI,
+            ChatMessage.created_at > user_message.created_at
+        ).order_by(ChatMessage.created_at.asc()).first()
+
+        deleted_ai_id = None
+        if existing_ai:
+            deleted_ai_id = existing_ai.id
+            db.delete(existing_ai)
+            db.commit()
+
+        # Yield delete event if we deleted an AI message
+        if deleted_ai_id:
+            yield {
+                "event": "ai_deleted",
+                "data": {"id": deleted_ai_id}
+            }
+
+        try:
+            # Get conversation history
+            history = await self._get_conversation_history(thread.id, db)
+
+            # Get lounge context
+            lounge_context = await self._get_lounge_context(thread.lounge_id, db)
+
+            # Get RAG context
+            rag_context, rag_sources = await self._get_rag_context(
+                user_id=user_message.user_id,
+                query=user_message.content,
+                db=db,
+                lounge_id=thread.lounge_id
+            )
+
+            # Build system prompt
+            system_prompt = self._build_system_prompt(lounge_context, rag_context)
+
+            # Stream AI response
+            full_response = ""
+            async for chunk in self.ai_service.generate_chat_response_stream(
+                messages=history,
+                context=system_prompt
+            ):
+                full_response += chunk
+                yield {
+                    "event": "ai_chunk",
+                    "data": {"content": chunk}
+                }
+
+            # Create AI message after streaming completes
+            metadata = {
+                "model": "gpt-4",
+                "streamed": True,
+                "regenerated": True
+            }
+            if rag_sources:
+                metadata["rag_sources"] = rag_sources
+
+            ai_message = ChatMessage(
+                thread_id=thread.id,
+                sender_type=SenderType.AI,
+                content=full_response,
+                message_metadata=metadata
+            )
+
+            db.add(ai_message)
+            db.commit()
+            db.refresh(ai_message)
+
+            # Yield completion event
+            yield {
+                "event": "ai_complete",
+                "data": {
+                    "id": ai_message.id,
+                    "thread_id": ai_message.thread_id,
+                    "sender_type": "ai",
+                    "content": ai_message.content,
+                    "created_at": ai_message.created_at.isoformat(),
+                    "metadata": metadata
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error regenerating streaming response: {str(e)}")
+            yield {
+                "event": "error",
+                "data": {"error": str(e)}
+            }
+
+    async def _generate_ai_response_for_message(
+        self,
+        thread: ChatThread,
+        user_message: ChatMessage,
+        db: Session
+    ) -> ChatMessage:
+        """
+        Generate AI response for a specific user message
+
+        Args:
+            thread: The chat thread
+            user_message: The user message to respond to
+            db: Database session
+
+        Returns:
+            New AI message
+        """
+        try:
+            # Get conversation history up to this message
+            history = await self._get_conversation_history(thread.id, db)
+
+            # Get lounge context
+            lounge_context = await self._get_lounge_context(thread.lounge_id, db)
+
+            # Get RAG context
+            rag_context, rag_sources = await self._get_rag_context(
+                user_id=user_message.user_id,
+                query=user_message.content,
+                db=db,
+                lounge_id=thread.lounge_id
+            )
+
+            # Build system prompt
+            system_prompt = self._build_system_prompt(lounge_context, rag_context)
+
+            # Generate AI response
+            ai_response, metadata = await self.ai_service.generate_chat_response(
+                messages=history,
+                context=system_prompt,
+                use_anthropic=False
+            )
+
+            # Add RAG sources to metadata
+            if rag_sources:
+                metadata["rag_sources"] = rag_sources
+
+            # Create AI message
+            ai_message = ChatMessage(
+                thread_id=thread.id,
+                sender_type=SenderType.AI,
+                content=ai_response,
+                message_metadata=metadata
+            )
+
+            db.add(ai_message)
+            db.commit()
+            db.refresh(ai_message)
+
+            return ai_message
+
+        except Exception as e:
+            logger.error(f"Error generating AI response: {str(e)}")
+            raise ValueError(f"Failed to generate AI response: {str(e)}")
 
 
 # Singleton instance

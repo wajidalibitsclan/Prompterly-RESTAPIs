@@ -3,9 +3,11 @@ Chat API endpoints
 Handles chat threads, messages, and AI responses
 """
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
+import json
 
 from app.db.session import get_db
 from app.core.jwt import get_current_active_user
@@ -17,7 +19,9 @@ from app.schemas.chat import (
     ChatThreadUpdate,
     ChatThreadResponse,
     MessageCreate,
+    MessageUpdate,
     MessageResponse,
+    ReplyToInfo,
     FileUploadResponse,
     AIResponseRequest,
     ChatHistoryResponse
@@ -156,7 +160,7 @@ async def get_thread(
         for msg in messages:
             sender_name = None
             sender_avatar = None
-            
+
             if msg.sender_type.value == "user" and msg.user_id:
                 user = db.query(User).filter(User.id == msg.user_id).first()
                 if user:
@@ -164,9 +168,27 @@ async def get_thread(
                     sender_avatar = user.avatar_url
             elif msg.sender_type.value == "ai":
                 sender_name = "AI Coach"
-            
+
             attachment_count = len(msg.attachments) if msg.attachments else 0
-            
+
+            # Build reply_to info if this message is a reply
+            reply_to_info = None
+            if msg.reply_to_id and msg.reply_to:
+                reply_sender_name = None
+                if msg.reply_to.sender_type.value == "user" and msg.reply_to.user_id:
+                    reply_user = db.query(User).filter(User.id == msg.reply_to.user_id).first()
+                    if reply_user:
+                        reply_sender_name = reply_user.name
+                elif msg.reply_to.sender_type.value == "ai":
+                    reply_sender_name = "AI Coach"
+
+                reply_to_info = ReplyToInfo(
+                    id=msg.reply_to.id,
+                    content=msg.reply_to.content[:100] + "..." if len(msg.reply_to.content) > 100 else msg.reply_to.content,
+                    sender_name=reply_sender_name,
+                    sender_type=msg.reply_to.sender_type
+                )
+
             message_responses.append(MessageResponse(
                 id=msg.id,
                 thread_id=msg.thread_id,
@@ -177,6 +199,8 @@ async def get_thread(
                 created_at=msg.created_at,
                 sender_name=sender_name,
                 sender_avatar=sender_avatar,
+                reply_to_id=msg.reply_to_id,
+                reply_to=reply_to_info,
                 has_attachments=attachment_count > 0,
                 attachment_count=attachment_count
             ))
@@ -286,10 +310,11 @@ async def send_message(
 ):
     """
     Send message to thread
-    
+
     - Sends user message
     - Optionally generates AI response
-    - Supports RAG context
+    - Supports RAG context with knowledge base
+    - Supports reply to another message
     """
     try:
         user_message, ai_message = await chat_service.send_message(
@@ -297,11 +322,45 @@ async def send_message(
             user_id=current_user.id,
             content=message_data.content,
             db=db,
-            generate_ai_response=generate_ai
+            generate_ai_response=generate_ai,
+            reply_to_id=message_data.reply_to_id
         )
-        
+
         responses = []
-        
+
+        # Get thread for lounge info
+        thread = db.query(ChatThread).filter(ChatThread.id == thread_id).first()
+
+        # Get mentor info for AI name/avatar
+        ai_sender_name = "AI Coach"
+        ai_sender_avatar = None
+        if thread and thread.lounge:
+            lounge = thread.lounge
+            if lounge.mentor and lounge.mentor.user:
+                ai_sender_name = lounge.mentor.user.name or "AI Coach"
+                ai_sender_avatar = lounge.mentor.user.avatar_url
+            # Use lounge profile image as fallback
+            if not ai_sender_avatar and lounge.profile_image:
+                ai_sender_avatar = lounge.profile_image.storage_path
+
+        # Build reply_to info for user message
+        reply_to_info = None
+        if user_message.reply_to_id and user_message.reply_to:
+            reply_sender_name = None
+            if user_message.reply_to.sender_type.value == "user" and user_message.reply_to.user_id:
+                reply_user = db.query(User).filter(User.id == user_message.reply_to.user_id).first()
+                if reply_user:
+                    reply_sender_name = reply_user.name
+            elif user_message.reply_to.sender_type.value == "ai":
+                reply_sender_name = "AI Coach"
+
+            reply_to_info = ReplyToInfo(
+                id=user_message.reply_to.id,
+                content=user_message.reply_to.content[:100] + "..." if len(user_message.reply_to.content) > 100 else user_message.reply_to.content,
+                sender_name=reply_sender_name,
+                sender_type=user_message.reply_to.sender_type
+            )
+
         # User message
         responses.append(MessageResponse(
             id=user_message.id,
@@ -313,10 +372,12 @@ async def send_message(
             created_at=user_message.created_at,
             sender_name=current_user.name,
             sender_avatar=current_user.avatar_url,
+            reply_to_id=user_message.reply_to_id,
+            reply_to=reply_to_info,
             has_attachments=False,
             attachment_count=0
         ))
-        
+
         # AI message if generated
         if ai_message:
             responses.append(MessageResponse(
@@ -327,14 +388,16 @@ async def send_message(
                 content=ai_message.content,
                 metadata=ai_message.message_metadata,
                 created_at=ai_message.created_at,
-                sender_name="AI Coach",
-                sender_avatar=None,
+                sender_name=ai_sender_name,
+                sender_avatar=ai_sender_avatar,
+                reply_to_id=None,
+                reply_to=None,
                 has_attachments=False,
                 attachment_count=0
             ))
-        
+
         return responses
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -345,6 +408,48 @@ async def send_message(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing message: {str(e)}"
         )
+
+
+@router.post("/threads/{thread_id}/messages/stream")
+async def send_message_stream(
+    thread_id: int,
+    message_data: MessageCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Send message and stream AI response via Server-Sent Events
+
+    - Sends user message immediately
+    - Streams AI response chunks in real-time
+    - Returns completion event with full message data
+    """
+    async def event_generator():
+        try:
+            async for event in chat_service.send_message_stream(
+                thread_id=thread_id,
+                user_id=current_user.id,
+                content=message_data.content,
+                db=db,
+                reply_to_id=message_data.reply_to_id
+            ):
+                event_type = event.get("event", "message")
+                data = json.dumps(event.get("data", {}))
+                yield f"event: {event_type}\ndata: {data}\n\n"
+        except ValueError as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': f'Error processing message: {str(e)}'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @router.post("/upload", response_model=FileUploadResponse)
@@ -407,7 +512,7 @@ async def get_file_url(
 ):
     """
     Get file download URL
-    
+
     - Returns presigned URL for file download
     - URL expires in 1 hour
     """
@@ -416,11 +521,218 @@ async def get_file_url(
             file_id=file_id,
             db=db
         )
-        
+
         return {"url": url}
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e)
         )
+
+
+@router.put("/messages/{message_id}", response_model=List[MessageResponse])
+async def edit_message(
+    message_id: int,
+    update_data: MessageUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    regenerate_ai: bool = Query(False, description="Regenerate AI response after edit")
+):
+    """
+    Edit a message
+
+    - Can only edit your own messages
+    - Optionally regenerate AI response after edit
+    """
+    try:
+        edited_message, ai_message = await chat_service.edit_message(
+            message_id=message_id,
+            user_id=current_user.id,
+            new_content=update_data.content,
+            db=db,
+            regenerate_ai=regenerate_ai
+        )
+
+        # Get thread for lounge info
+        thread = db.query(ChatThread).filter(ChatThread.id == edited_message.thread_id).first()
+
+        responses = []
+
+        # Build reply_to info for edited message
+        reply_to_info = None
+        if edited_message.reply_to_id and edited_message.reply_to:
+            reply_sender_name = None
+            if edited_message.reply_to.sender_type.value == "user" and edited_message.reply_to.user_id:
+                reply_user = db.query(User).filter(User.id == edited_message.reply_to.user_id).first()
+                if reply_user:
+                    reply_sender_name = reply_user.name
+            elif edited_message.reply_to.sender_type.value == "ai":
+                reply_sender_name = "AI Coach"
+
+            reply_to_info = ReplyToInfo(
+                id=edited_message.reply_to.id,
+                content=edited_message.reply_to.content[:100] + "..." if len(edited_message.reply_to.content) > 100 else edited_message.reply_to.content,
+                sender_name=reply_sender_name,
+                sender_type=edited_message.reply_to.sender_type
+            )
+
+        # Edited message response
+        responses.append(MessageResponse(
+            id=edited_message.id,
+            thread_id=edited_message.thread_id,
+            sender_type=edited_message.sender_type,
+            user_id=edited_message.user_id,
+            content=edited_message.content,
+            metadata=edited_message.message_metadata,
+            created_at=edited_message.created_at,
+            edited_at=edited_message.edited_at,
+            sender_name=current_user.name,
+            sender_avatar=current_user.avatar_url,
+            reply_to_id=edited_message.reply_to_id,
+            reply_to=reply_to_info,
+            has_attachments=False,
+            attachment_count=0
+        ))
+
+        # AI message if regenerated
+        if ai_message:
+            ai_sender_name = "AI Coach"
+            ai_sender_avatar = None
+            if thread and thread.lounge:
+                lounge = thread.lounge
+                if lounge.mentor and lounge.mentor.user:
+                    ai_sender_name = lounge.mentor.user.name or "AI Coach"
+                    ai_sender_avatar = lounge.mentor.user.avatar_url
+                if not ai_sender_avatar and lounge.profile_image:
+                    ai_sender_avatar = lounge.profile_image.storage_path
+
+            responses.append(MessageResponse(
+                id=ai_message.id,
+                thread_id=ai_message.thread_id,
+                sender_type=ai_message.sender_type,
+                user_id=ai_message.user_id,
+                content=ai_message.content,
+                metadata=ai_message.message_metadata,
+                created_at=ai_message.created_at,
+                edited_at=None,
+                sender_name=ai_sender_name,
+                sender_avatar=ai_sender_avatar,
+                reply_to_id=None,
+                reply_to=None,
+                has_attachments=False,
+                attachment_count=0
+            ))
+
+        return responses
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error editing message: {str(e)}"
+        )
+
+
+@router.post("/messages/{message_id}/regenerate", response_model=MessageResponse)
+async def regenerate_response(
+    message_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Regenerate AI response for a user message
+
+    - Deletes existing AI response and generates new one
+    - Can only regenerate for your own messages
+    """
+    try:
+        ai_message = await chat_service.regenerate_response(
+            message_id=message_id,
+            user_id=current_user.id,
+            db=db
+        )
+
+        # Get thread for lounge info
+        thread = db.query(ChatThread).filter(ChatThread.id == ai_message.thread_id).first()
+
+        ai_sender_name = "AI Coach"
+        ai_sender_avatar = None
+        if thread and thread.lounge:
+            lounge = thread.lounge
+            if lounge.mentor and lounge.mentor.user:
+                ai_sender_name = lounge.mentor.user.name or "AI Coach"
+                ai_sender_avatar = lounge.mentor.user.avatar_url
+            if not ai_sender_avatar and lounge.profile_image:
+                ai_sender_avatar = lounge.profile_image.storage_path
+
+        return MessageResponse(
+            id=ai_message.id,
+            thread_id=ai_message.thread_id,
+            sender_type=ai_message.sender_type,
+            user_id=ai_message.user_id,
+            content=ai_message.content,
+            metadata=ai_message.message_metadata,
+            created_at=ai_message.created_at,
+            edited_at=None,
+            sender_name=ai_sender_name,
+            sender_avatar=ai_sender_avatar,
+            reply_to_id=None,
+            reply_to=None,
+            has_attachments=False,
+            attachment_count=0
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error regenerating response: {str(e)}"
+        )
+
+
+@router.post("/messages/{message_id}/regenerate/stream")
+async def regenerate_response_stream(
+    message_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Regenerate AI response with streaming via Server-Sent Events
+
+    - Deletes existing AI response
+    - Streams new AI response chunks in real-time
+    - Returns completion event with full message data
+    """
+    async def event_generator():
+        try:
+            async for event in chat_service.regenerate_response_stream(
+                message_id=message_id,
+                user_id=current_user.id,
+                db=db
+            ):
+                event_type = event.get("event", "message")
+                data = json.dumps(event.get("data", {}))
+                yield f"event: {event_type}\ndata: {data}\n\n"
+        except ValueError as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': f'Error regenerating response: {str(e)}'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )

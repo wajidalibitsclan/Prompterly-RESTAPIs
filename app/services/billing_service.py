@@ -12,13 +12,19 @@ from app.core.config import settings
 from app.db.models.billing import (
     SubscriptionPlan,
     Subscription,
+    LoungeSubscription,
     Payment,
     SubscriptionStatus,
     PaymentProvider,
-    PaymentStatus
+    PaymentStatus,
+    LoungePlanType
 )
 from app.db.models.user import User
-from app.db.models.lounge import LoungeMembership, MembershipRole
+from app.db.models.lounge import Lounge, LoungeMembership, MembershipRole, AccessType
+
+# Lounge subscription pricing constants
+LOUNGE_MONTHLY_PRICE_CENTS = 2500   # $25/month
+LOUNGE_YEARLY_PRICE_CENTS = 24000   # $240/year
 
 logger = logging.getLogger(__name__)
 
@@ -457,12 +463,464 @@ class BillingService:
             )
             
             logger.info(f"Created Stripe customer {customer.id} for user {user.id}")
-            
+
             return customer.id
-        
+
         except stripe.error.StripeError as e:
             logger.error(f"Error creating Stripe customer: {str(e)}")
             raise
+
+    # =========================================================================
+    # Lounge-Specific Subscription Methods
+    # =========================================================================
+
+    async def create_lounge_stripe_product(
+        self,
+        lounge_id: int,
+        lounge_title: str,
+        lounge_slug: str,
+        db: Session
+    ) -> Dict[str, str]:
+        """
+        Create Stripe product and prices for a lounge
+
+        Args:
+            lounge_id: Database ID of the lounge
+            lounge_title: Title of the lounge for product name
+            lounge_slug: Slug for metadata
+            db: Database session
+
+        Returns:
+            Dict with stripe_product_id, stripe_monthly_price_id, stripe_yearly_price_id
+
+        Raises:
+            Exception: If Stripe API call fails
+        """
+        try:
+            # Create Stripe Product
+            product = stripe.Product.create(
+                name=f"Lounge: {lounge_title}",
+                description=f"Subscription to {lounge_title} lounge",
+                metadata={
+                    'lounge_id': str(lounge_id),
+                    'lounge_slug': lounge_slug,
+                    'type': 'lounge_subscription'
+                }
+            )
+
+            logger.info(f"Created Stripe product {product.id} for lounge {lounge_id}")
+
+            # Create Monthly Price
+            monthly_price = stripe.Price.create(
+                product=product.id,
+                unit_amount=LOUNGE_MONTHLY_PRICE_CENTS,
+                currency='usd',
+                recurring={
+                    'interval': 'month',
+                    'interval_count': 1
+                },
+                metadata={
+                    'lounge_id': str(lounge_id),
+                    'plan_type': 'monthly'
+                }
+            )
+
+            logger.info(f"Created monthly price {monthly_price.id} for lounge {lounge_id}")
+
+            # Create Yearly Price
+            yearly_price = stripe.Price.create(
+                product=product.id,
+                unit_amount=LOUNGE_YEARLY_PRICE_CENTS,
+                currency='usd',
+                recurring={
+                    'interval': 'year',
+                    'interval_count': 1
+                },
+                metadata={
+                    'lounge_id': str(lounge_id),
+                    'plan_type': 'yearly'
+                }
+            )
+
+            logger.info(f"Created yearly price {yearly_price.id} for lounge {lounge_id}")
+
+            return {
+                'stripe_product_id': product.id,
+                'stripe_monthly_price_id': monthly_price.id,
+                'stripe_yearly_price_id': yearly_price.id
+            }
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error creating lounge product: {str(e)}")
+            raise Exception(f"Failed to create Stripe product for lounge: {str(e)}")
+
+    async def create_lounge_checkout_session(
+        self,
+        user_id: int,
+        lounge_id: int,
+        plan_type: str,  # 'monthly' or 'yearly'
+        success_url: str,
+        cancel_url: str,
+        db: Session
+    ) -> Dict:
+        """
+        Create Stripe checkout session for lounge subscription
+
+        Args:
+            user_id: User ID
+            lounge_id: Lounge ID
+            plan_type: 'monthly' or 'yearly'
+            success_url: Success redirect URL
+            cancel_url: Cancel redirect URL
+            db: Database session
+
+        Returns:
+            Checkout session data
+
+        Raises:
+            ValueError: If lounge not found, not paid, or user already subscribed
+        """
+        # Get user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError("User not found")
+
+        # Get lounge
+        lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+        if not lounge:
+            raise ValueError("Lounge not found")
+
+        # Verify lounge is paid and has Stripe product
+        if lounge.access_type != AccessType.PAID:
+            raise ValueError("Lounge is not a paid lounge")
+
+        if not lounge.stripe_product_id:
+            raise ValueError("Lounge does not have Stripe product configured")
+
+        # Select correct price ID
+        if plan_type == 'monthly':
+            price_id = lounge.stripe_monthly_price_id
+        elif plan_type == 'yearly':
+            price_id = lounge.stripe_yearly_price_id
+        else:
+            raise ValueError("Invalid plan type. Must be 'monthly' or 'yearly'")
+
+        if not price_id:
+            raise ValueError(f"Lounge does not have {plan_type} price configured")
+
+        # Check if user already has active subscription to this lounge
+        existing = db.query(LoungeSubscription).filter(
+            LoungeSubscription.user_id == user_id,
+            LoungeSubscription.lounge_id == lounge_id,
+            LoungeSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.TRIALING
+            ])
+        ).first()
+
+        if existing:
+            raise ValueError("User already has an active subscription to this lounge")
+
+        try:
+            # Create or get Stripe customer
+            customer_id = await self._get_or_create_customer(user, db)
+
+            # Create checkout session
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                payment_method_types=['card'],
+                line_items=[{
+                    'price': price_id,
+                    'quantity': 1,
+                }],
+                mode='subscription',
+                success_url=success_url + '?session_id={CHECKOUT_SESSION_ID}',
+                cancel_url=cancel_url,
+                metadata={
+                    'user_id': str(user_id),
+                    'lounge_id': str(lounge_id),
+                    'plan_type': plan_type,
+                    'subscription_type': 'lounge'  # Distinguish from regular subscriptions
+                }
+            )
+
+            logger.info(f"Created lounge checkout session {session.id} for user {user_id}, lounge {lounge_id}")
+
+            return {
+                'session_id': session.id,
+                'checkout_url': session.url,
+                'expires_at': datetime.fromtimestamp(session.expires_at)
+            }
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error creating lounge checkout: {str(e)}")
+            raise Exception(f"Failed to create checkout session: {str(e)}")
+
+    async def handle_lounge_checkout_completed(
+        self,
+        session: Dict,
+        db: Session
+    ):
+        """
+        Handle successful lounge subscription checkout
+
+        Args:
+            session: Stripe session object
+            db: Database session
+        """
+        try:
+            user_id = int(session['metadata']['user_id'])
+            lounge_id = int(session['metadata']['lounge_id'])
+            plan_type_str = session['metadata']['plan_type']
+
+            # Map plan type string to enum
+            plan_type = LoungePlanType.MONTHLY if plan_type_str == 'monthly' else LoungePlanType.YEARLY
+
+            # Get subscription from Stripe
+            subscription_id = session['subscription']
+            stripe_sub = stripe.Subscription.retrieve(subscription_id)
+
+            # Get the price ID from the subscription
+            price_id = stripe_sub['items']['data'][0]['price']['id']
+
+            # Create lounge subscription record
+            lounge_subscription = LoungeSubscription(
+                user_id=user_id,
+                lounge_id=lounge_id,
+                plan_type=plan_type,
+                stripe_subscription_id=subscription_id,
+                stripe_price_id=price_id,
+                status=SubscriptionStatus.ACTIVE,
+                started_at=datetime.fromtimestamp(stripe_sub['current_period_start']),
+                renews_at=datetime.fromtimestamp(stripe_sub['current_period_end'])
+            )
+
+            db.add(lounge_subscription)
+            db.commit()
+
+            logger.info(f"Created lounge subscription {lounge_subscription.id} for user {user_id}, lounge {lounge_id}")
+
+            # Create lounge membership if not already a member
+            existing_membership = db.query(LoungeMembership).filter(
+                LoungeMembership.user_id == user_id,
+                LoungeMembership.lounge_id == lounge_id,
+                LoungeMembership.left_at.is_(None)
+            ).first()
+
+            if not existing_membership:
+                membership = LoungeMembership(
+                    user_id=user_id,
+                    lounge_id=lounge_id,
+                    role=MembershipRole.MEMBER
+                )
+                db.add(membership)
+                db.commit()
+                logger.info(f"Created lounge membership for user {user_id} in lounge {lounge_id}")
+            else:
+                logger.info(f"User {user_id} already a member of lounge {lounge_id}")
+
+        except Exception as e:
+            logger.error(f"Error handling lounge checkout completion: {str(e)}")
+            db.rollback()
+            raise
+
+    async def handle_lounge_subscription_updated(
+        self,
+        subscription: Dict,
+        db: Session
+    ):
+        """
+        Handle lounge subscription update from Stripe
+
+        Args:
+            subscription: Stripe subscription object
+            db: Database session
+        """
+        try:
+            stripe_sub_id = subscription['id']
+
+            # Find lounge subscription
+            lounge_sub = db.query(LoungeSubscription).filter(
+                LoungeSubscription.stripe_subscription_id == stripe_sub_id
+            ).first()
+
+            if not lounge_sub:
+                logger.warning(f"Lounge subscription {stripe_sub_id} not found in database")
+                return
+
+            # Update status
+            status_map = {
+                'active': SubscriptionStatus.ACTIVE,
+                'trialing': SubscriptionStatus.TRIALING,
+                'past_due': SubscriptionStatus.PAST_DUE,
+                'canceled': SubscriptionStatus.CANCELED,
+                'unpaid': SubscriptionStatus.PAST_DUE
+            }
+
+            new_status = status_map.get(subscription['status'], SubscriptionStatus.CANCELED)
+            old_status = lounge_sub.status
+            lounge_sub.status = new_status
+
+            # Update renewal date
+            if subscription.get('current_period_end'):
+                lounge_sub.renews_at = datetime.fromtimestamp(subscription['current_period_end'])
+
+            # Update cancellation date if canceled
+            if subscription.get('canceled_at'):
+                lounge_sub.canceled_at = datetime.fromtimestamp(subscription['canceled_at'])
+
+            db.commit()
+
+            logger.info(f"Updated lounge subscription {lounge_sub.id} from {old_status} to {new_status}")
+
+            # If subscription was canceled, remove membership
+            if new_status == SubscriptionStatus.CANCELED and old_status != SubscriptionStatus.CANCELED:
+                membership = db.query(LoungeMembership).filter(
+                    LoungeMembership.user_id == lounge_sub.user_id,
+                    LoungeMembership.lounge_id == lounge_sub.lounge_id,
+                    LoungeMembership.left_at.is_(None)
+                ).first()
+
+                if membership:
+                    membership.left_at = datetime.utcnow()
+                    db.commit()
+                    logger.info(f"Removed user {lounge_sub.user_id} from lounge {lounge_sub.lounge_id} due to canceled subscription")
+
+        except Exception as e:
+            logger.error(f"Error handling lounge subscription update: {str(e)}")
+            raise
+
+    async def cancel_lounge_subscription(
+        self,
+        user_id: int,
+        lounge_id: int,
+        db: Session,
+        immediate: bool = False
+    ) -> LoungeSubscription:
+        """
+        Cancel user's lounge subscription
+
+        Args:
+            user_id: User ID
+            lounge_id: Lounge ID
+            db: Database session
+            immediate: Cancel immediately vs at period end
+
+        Returns:
+            Updated lounge subscription
+
+        Raises:
+            ValueError: If no active subscription found
+        """
+        # Find active subscription
+        subscription = db.query(LoungeSubscription).filter(
+            LoungeSubscription.user_id == user_id,
+            LoungeSubscription.lounge_id == lounge_id,
+            LoungeSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.TRIALING
+            ])
+        ).first()
+
+        if not subscription:
+            raise ValueError("No active subscription found for this lounge")
+
+        try:
+            # Cancel in Stripe
+            if subscription.stripe_subscription_id:
+                stripe.Subscription.modify(
+                    subscription.stripe_subscription_id,
+                    cancel_at_period_end=not immediate
+                )
+
+                if immediate:
+                    stripe.Subscription.cancel(subscription.stripe_subscription_id)
+
+            # Update database
+            if immediate:
+                subscription.status = SubscriptionStatus.CANCELED
+                subscription.canceled_at = datetime.utcnow()
+
+                # Remove membership immediately
+                membership = db.query(LoungeMembership).filter(
+                    LoungeMembership.user_id == user_id,
+                    LoungeMembership.lounge_id == lounge_id,
+                    LoungeMembership.left_at.is_(None)
+                ).first()
+
+                if membership:
+                    membership.left_at = datetime.utcnow()
+            else:
+                # Will cancel at period end
+                subscription.canceled_at = subscription.renews_at
+
+            db.commit()
+            db.refresh(subscription)
+
+            logger.info(f"Canceled lounge subscription {subscription.id} (immediate={immediate})")
+
+            return subscription
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error canceling lounge subscription: {str(e)}")
+            raise Exception(f"Failed to cancel subscription: {str(e)}")
+
+    async def get_user_lounge_subscription(
+        self,
+        user_id: int,
+        lounge_id: int,
+        db: Session
+    ) -> Optional[LoungeSubscription]:
+        """
+        Get user's active subscription to a specific lounge
+
+        Args:
+            user_id: User ID
+            lounge_id: Lounge ID
+            db: Database session
+
+        Returns:
+            LoungeSubscription or None
+        """
+        return db.query(LoungeSubscription).filter(
+            LoungeSubscription.user_id == user_id,
+            LoungeSubscription.lounge_id == lounge_id,
+            LoungeSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.TRIALING
+            ])
+        ).first()
+
+    async def get_user_lounge_subscriptions(
+        self,
+        user_id: int,
+        db: Session,
+        include_canceled: bool = False
+    ) -> List[LoungeSubscription]:
+        """
+        Get all user's lounge subscriptions
+
+        Args:
+            user_id: User ID
+            db: Database session
+            include_canceled: Include canceled subscriptions
+
+        Returns:
+            List of LoungeSubscription
+        """
+        query = db.query(LoungeSubscription).filter(
+            LoungeSubscription.user_id == user_id
+        )
+
+        if not include_canceled:
+            query = query.filter(
+                LoungeSubscription.status.in_([
+                    SubscriptionStatus.ACTIVE,
+                    SubscriptionStatus.TRIALING
+                ])
+            )
+
+        return query.all()
 
 
 # Singleton instance

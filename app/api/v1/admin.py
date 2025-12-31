@@ -2,7 +2,7 @@
 Admin API endpoints
 Handles admin dashboard, user management, and analytics
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import List, Optional
@@ -37,6 +37,10 @@ from app.schemas.admin import (
 )
 from app.core.security import hash_password
 from app.services.file_service import file_service
+from app.services.billing_service import billing_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -627,6 +631,7 @@ async def admin_create_lounge(
 
     - Requires admin role
     - Can assign to any mentor
+    - Automatically creates Stripe product/prices for paid lounges
     """
     # Verify mentor exists
     mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
@@ -660,7 +665,7 @@ async def admin_create_lounge(
     elif access_type == "invite_only":
         access_type_enum = AccessType.INVITE_ONLY
 
-    # Create lounge
+    # Create lounge first (without Stripe IDs)
     lounge = Lounge(
         mentor_id=mentor_id,
         title=title,
@@ -676,7 +681,33 @@ async def admin_create_lounge(
     db.commit()
     db.refresh(lounge)
 
-    return {
+    # If paid lounge, create Stripe product and prices
+    stripe_error = None
+    if access_type_enum == AccessType.PAID:
+        try:
+            stripe_data = await billing_service.create_lounge_stripe_product(
+                lounge_id=lounge.id,
+                lounge_title=title,
+                lounge_slug=slug,
+                db=db
+            )
+
+            # Update lounge with Stripe IDs
+            lounge.stripe_product_id = stripe_data['stripe_product_id']
+            lounge.stripe_monthly_price_id = stripe_data['stripe_monthly_price_id']
+            lounge.stripe_yearly_price_id = stripe_data['stripe_yearly_price_id']
+
+            db.commit()
+            db.refresh(lounge)
+
+            logger.info(f"Created Stripe product for lounge {lounge.id}: {stripe_data['stripe_product_id']}")
+
+        except Exception as e:
+            # Log the error but don't fail lounge creation
+            logger.error(f"Failed to create Stripe product for lounge {lounge.id}: {str(e)}")
+            stripe_error = str(e)
+
+    response = {
         "id": lounge.id,
         "title": lounge.title,
         "slug": lounge.slug,
@@ -684,8 +715,84 @@ async def admin_create_lounge(
         "category_id": lounge.category_id,
         "access_type": lounge.access_type.value,
         "mentor_id": lounge.mentor_id,
-        "created_at": lounge.created_at
+        "created_at": lounge.created_at,
+        "stripe_product_id": lounge.stripe_product_id,
+        "stripe_monthly_price_id": lounge.stripe_monthly_price_id,
+        "stripe_yearly_price_id": lounge.stripe_yearly_price_id
     }
+
+    if stripe_error:
+        response["stripe_setup_warning"] = f"Lounge created but Stripe setup failed: {stripe_error}. You can retry via /admin/lounges/{lounge.id}/setup-stripe"
+
+    return response
+
+
+@router.post("/lounges/{lounge_id}/setup-stripe", status_code=status.HTTP_200_OK)
+async def admin_setup_lounge_stripe(
+    lounge_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Setup or retry Stripe product/prices for a lounge
+
+    - Requires admin role
+    - Creates Stripe product if not exists
+    - Useful for retrying failed setups or setting up existing lounges
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    if lounge.access_type != AccessType.PAID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only paid lounges can have Stripe products"
+        )
+
+    if lounge.stripe_product_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Lounge already has Stripe product configured"
+        )
+
+    try:
+        stripe_data = await billing_service.create_lounge_stripe_product(
+            lounge_id=lounge.id,
+            lounge_title=lounge.title,
+            lounge_slug=lounge.slug,
+            db=db
+        )
+
+        lounge.stripe_product_id = stripe_data['stripe_product_id']
+        lounge.stripe_monthly_price_id = stripe_data['stripe_monthly_price_id']
+        lounge.stripe_yearly_price_id = stripe_data['stripe_yearly_price_id']
+
+        db.commit()
+        db.refresh(lounge)
+
+        logger.info(f"Setup Stripe product for lounge {lounge.id}: {stripe_data['stripe_product_id']}")
+
+        return {
+            "message": "Stripe product created successfully",
+            "lounge_id": lounge.id,
+            "stripe_product_id": lounge.stripe_product_id,
+            "stripe_monthly_price_id": lounge.stripe_monthly_price_id,
+            "stripe_yearly_price_id": lounge.stripe_yearly_price_id,
+            "monthly_price": "$25/month",
+            "yearly_price": "$240/year"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to create Stripe product for lounge {lounge.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create Stripe product: {str(e)}"
+        )
 
 
 @router.put("/lounges/{lounge_id}")
@@ -989,6 +1096,88 @@ async def update_user(
         "created_at": user.created_at,
         "updated_at": user.updated_at
     }
+
+
+@router.post("/users/{user_id}/avatar")
+async def upload_user_avatar(
+    user_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Upload avatar for a user (admin only)
+
+    - Accepts image files (jpg, jpeg, png, gif, webp)
+    - Max file size: 5MB
+    - Returns updated user with new avatar_url
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Validate file type
+    allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
+        )
+
+    # Validate file extension
+    allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+    file_ext = '.' + file.filename.split('.')[-1].lower() if file.filename and '.' in file.filename else ''
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file extension. Allowed: {', '.join(allowed_extensions)}"
+        )
+
+    try:
+        # Upload file to storage
+        file_record = await file_service.upload_file(
+            file=file,
+            user_id=user.id,
+            db=db,
+            folder="avatars"
+        )
+
+        # Generate URL for the uploaded file
+        avatar_url = await file_service.get_file_url(file_record.id, db)
+
+        # Update user's avatar_url
+        user.avatar_url = avatar_url
+        user.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(user)
+
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "role": user.role.value,
+            "avatar_url": user.avatar_url,
+            "email_verified_at": user.email_verified_at,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to upload avatar for user {user_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload avatar"
+        )
 
 
 # =============================================================================

@@ -43,6 +43,20 @@ class MessageCreate(BaseModel):
     """Schema for creating message"""
     content: str = Field(..., min_length=1, max_length=10000)
     attachment_ids: List[int] = []
+    reply_to_id: Optional[int] = None  # ID of message being replied to
+
+
+class MessageUpdate(BaseModel):
+    """Schema for updating/editing a message"""
+    content: str = Field(..., min_length=1, max_length=10000)
+
+
+class ReplyToInfo(BaseModel):
+    """Schema for reply-to message info"""
+    id: int
+    content: str  # Truncated content for display
+    sender_name: Optional[str] = None
+    sender_type: SenderType
 
 
 class MessageResponse(BaseModel):
@@ -54,15 +68,20 @@ class MessageResponse(BaseModel):
     content: str
     metadata: Optional[dict]
     created_at: datetime
-    
+    edited_at: Optional[datetime] = None
+
     # Sender info
     sender_name: Optional[str] = None
     sender_avatar: Optional[str] = None
-    
+
+    # Reply info
+    reply_to_id: Optional[int] = None
+    reply_to: Optional[ReplyToInfo] = None
+
     # Attachments
     has_attachments: bool = False
     attachment_count: int = 0
-    
+
     class Config:
         from_attributes = True
 

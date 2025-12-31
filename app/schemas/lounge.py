@@ -57,6 +57,13 @@ class LoungeResponse(BaseModel):
     profile_image_url: Optional[str] = None
     created_at: datetime
 
+    # Stripe pricing for paid lounges
+    stripe_product_id: Optional[str] = None
+    stripe_monthly_price_id: Optional[str] = None
+    stripe_yearly_price_id: Optional[str] = None
+    monthly_price: Optional[int] = None  # Price in cents
+    yearly_price: Optional[int] = None   # Price in cents
+
     # Nested data
     mentor_name: Optional[str]
     mentor_avatar: Optional[str]

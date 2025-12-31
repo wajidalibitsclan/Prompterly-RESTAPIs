@@ -46,6 +46,11 @@ class Lounge(Base):
     profile_image_id = Column(Integer, ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Stripe subscription fields for paid lounges
+    stripe_product_id = Column(String(255), nullable=True, index=True)
+    stripe_monthly_price_id = Column(String(255), nullable=True)
+    stripe_yearly_price_id = Column(String(255), nullable=True)
+
     # Relationships
     mentor = relationship("Mentor", back_populates="lounges")
     category = relationship("Category", back_populates="lounges")
@@ -58,6 +63,11 @@ class Lounge(Base):
     )
     chat_threads = relationship(
         "ChatThread",
+        back_populates="lounge",
+        cascade="all, delete-orphan"
+    )
+    subscriptions = relationship(
+        "LoungeSubscription",
         back_populates="lounge",
         cascade="all, delete-orphan"
     )

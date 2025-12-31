@@ -22,8 +22,10 @@ from app.db.models.note import Note, TimeCapsule, CapsuleStatus
 from app.db.models.billing import (
     SubscriptionPlan,
     Subscription,
+    LoungeSubscription,
     Payment,
     BillingInterval,
+    LoungePlanType,
     SubscriptionStatus,
     PaymentProvider,
     PaymentStatus
@@ -46,6 +48,11 @@ from app.db.models.knowledge_base import (
     KBDocument,
     KBDocumentChunk,
     KBFaq
+)
+from app.db.models.background_job import (
+    BackgroundJob,
+    JobStatus,
+    JobType
 )
 
 __all__ = [
@@ -85,8 +92,10 @@ __all__ = [
     # Billing models
     "SubscriptionPlan",
     "Subscription",
+    "LoungeSubscription",
     "Payment",
     "BillingInterval",
+    "LoungePlanType",
     "SubscriptionStatus",
     "PaymentProvider",
     "PaymentStatus",
@@ -109,4 +118,9 @@ __all__ = [
     "KBDocument",
     "KBDocumentChunk",
     "KBFaq",
+
+    # Background Job models
+    "BackgroundJob",
+    "JobStatus",
+    "JobType",
 ]

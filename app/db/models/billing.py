@@ -17,6 +17,12 @@ class BillingInterval(str, Enum):
     YEARLY = "yearly"
 
 
+class LoungePlanType(str, Enum):
+    """Lounge subscription plan type enumeration"""
+    MONTHLY = "monthly"
+    YEARLY = "yearly"
+
+
 class SubscriptionStatus(str, Enum):
     """Subscription status enumeration"""
     TRIALING = "trialing"
@@ -150,11 +156,75 @@ class Payment(Base):
     def amount_dollars(self) -> float:
         """Get amount in dollars"""
         return self.amount_cents / 100
-    
+
     def __repr__(self):
         return (
             f"<Payment(id={self.id}, "
             f"user_id={self.user_id}, "
             f"amount=${self.amount_dollars}, "
+            f"status={self.status})>"
+        )
+
+
+class LoungeSubscription(Base):
+    """
+    Lounge subscription model - tracks user subscriptions to specific lounges
+    Separate from generic Subscription model for per-lounge billing
+    Each lounge has its own Stripe Product with monthly/yearly prices
+    """
+
+    __tablename__ = "lounge_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    lounge_id = Column(Integer, ForeignKey("lounges.id"), nullable=False, index=True)
+    plan_type = Column(
+        SQLEnum(LoungePlanType, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False
+    )
+    stripe_subscription_id = Column(String(255), nullable=False, unique=True, index=True)
+    stripe_price_id = Column(String(255), nullable=False)  # The actual Stripe price used
+    status = Column(
+        SQLEnum(SubscriptionStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=SubscriptionStatus.ACTIVE,
+        nullable=False
+    )
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    renews_at = Column(DateTime, nullable=False)
+    canceled_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    user = relationship("User", back_populates="lounge_subscriptions")
+    lounge = relationship("Lounge", back_populates="subscriptions")
+
+    @property
+    def is_active(self) -> bool:
+        """Check if subscription is active"""
+        return self.status in [
+            SubscriptionStatus.TRIALING,
+            SubscriptionStatus.ACTIVE
+        ]
+
+    @property
+    def price_cents(self) -> int:
+        """Get price in cents based on plan type"""
+        if self.plan_type == LoungePlanType.MONTHLY:
+            return 2500  # $25
+        return 24000  # $240
+
+    @property
+    def days_until_renewal(self) -> int:
+        """Get days until renewal"""
+        if not self.is_active:
+            return 0
+        delta = self.renews_at - datetime.utcnow()
+        return max(0, delta.days)
+
+    def __repr__(self):
+        return (
+            f"<LoungeSubscription(id={self.id}, "
+            f"user_id={self.user_id}, "
+            f"lounge_id={self.lounge_id}, "
+            f"plan_type={self.plan_type}, "
             f"status={self.status})>"
         )

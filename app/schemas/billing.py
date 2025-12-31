@@ -101,3 +101,52 @@ class CancelSubscriptionRequest(BaseModel):
 class UpdatePaymentMethodResponse(BaseModel):
     """Schema for payment method update"""
     setup_url: str
+
+
+class LoungeCheckoutCreate(BaseModel):
+    """Schema for creating lounge checkout session"""
+    lounge_id: int
+    plan_type: str = Field(..., pattern="^(monthly|yearly)$")  # 'monthly' or 'yearly'
+    success_url: str
+    cancel_url: str
+
+
+class LoungeSubscriptionResponse(BaseModel):
+    """Schema for lounge subscription response"""
+    id: int
+    user_id: int
+    lounge_id: int
+    plan_type: str  # 'monthly' or 'yearly'
+    stripe_subscription_id: str
+    stripe_price_id: str
+    status: str
+    started_at: datetime
+    renews_at: Optional[datetime]
+    canceled_at: Optional[datetime]
+
+    # Lounge details
+    lounge_title: str
+    lounge_slug: str
+
+    # Computed
+    is_active: bool = False
+    days_until_renewal: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CancelLoungeSubscriptionRequest(BaseModel):
+    """Schema for canceling lounge subscription"""
+    immediate: bool = False
+    reason: Optional[str] = None
+    feedback: Optional[str] = None
+
+
+class LoungePricing(BaseModel):
+    """Schema for lounge pricing information"""
+    monthly_price_cents: int = 2500   # $25
+    yearly_price_cents: int = 24000   # $240
+    monthly_price_display: str = "$25/month"
+    yearly_price_display: str = "$240/year"
+    yearly_savings_percent: int = 20

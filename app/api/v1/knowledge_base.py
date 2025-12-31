@@ -212,35 +212,64 @@ async def list_prompts(
     )
 
 
-@router.post("/prompts", response_model=KBPromptResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/prompts", status_code=status.HTTP_201_CREATED)
 async def create_prompt(
     data: KBPromptCreate,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
     """Create a new KB prompt (admin only)"""
+    from app.services.background_task_service import background_task_service
+    from app.db.models.background_job import JobType
+    from app.db.session import SessionLocal
+
     prompt = await knowledge_base_service.create_prompt(
-        db, data.model_dump(), admin_user.id
+        db, data.model_dump(), admin_user.id, skip_embedding=True  # Skip sync embedding
     )
-    db.refresh(prompt)  # Refresh to get lounge relationship
-    return KBPromptResponse(
-        id=prompt.id,
-        title=prompt.title,
-        content=prompt.content,
-        description=prompt.description,
-        tags=prompt.tags,
-        is_active=prompt.is_active,
-        is_included_in_rag=prompt.is_included_in_rag,
-        usage_count=prompt.usage_count,
-        has_embedding=prompt.embedding is not None,
-        created_at=prompt.created_at,
-        updated_at=prompt.updated_at,
-        category_id=prompt.category_id,
-        category_name=prompt.category.name if prompt.category else None,
-        lounge_id=prompt.lounge_id,
-        lounge_name=prompt.lounge.title if prompt.lounge else None,
-        created_by_name=admin_user.name
-    )
+    db.refresh(prompt)
+
+    # Start background job for embedding if RAG is enabled
+    job_id = None
+    if prompt.is_included_in_rag:
+        job = background_task_service.create_job(
+            db=db,
+            job_type=JobType.PROMPT_EMBEDDING,
+            entity_type="prompt",
+            entity_id=prompt.id,
+            created_by_id=admin_user.id,
+            total_steps=3
+        )
+        job_id = job.id
+
+        # Start background task
+        background_task_service.start_background_task(
+            db_session_factory=SessionLocal,
+            job_id=job.id,
+            job_type=JobType.PROMPT_EMBEDDING,
+            entity_id=prompt.id
+        )
+
+    return {
+        "prompt": {
+            "id": prompt.id,
+            "title": prompt.title,
+            "content": prompt.content,
+            "description": prompt.description,
+            "tags": prompt.tags,
+            "is_active": prompt.is_active,
+            "is_included_in_rag": prompt.is_included_in_rag,
+            "usage_count": prompt.usage_count,
+            "has_embedding": prompt.embedding is not None,
+            "created_at": prompt.created_at.isoformat() if prompt.created_at else None,
+            "updated_at": prompt.updated_at.isoformat() if prompt.updated_at else None,
+            "category_id": prompt.category_id,
+            "category_name": prompt.category.name if prompt.category else None,
+            "lounge_id": prompt.lounge_id,
+            "lounge_name": prompt.lounge.title if prompt.lounge else None,
+            "created_by_name": admin_user.name
+        },
+        "job_id": job_id
+    }
 
 
 @router.get("/prompts/{prompt_id}", response_model=KBPromptResponse)
@@ -274,7 +303,7 @@ async def get_prompt(
     )
 
 
-@router.put("/prompts/{prompt_id}", response_model=KBPromptResponse)
+@router.put("/prompts/{prompt_id}")
 async def update_prompt(
     prompt_id: int,
     data: KBPromptUpdate,
@@ -282,31 +311,77 @@ async def update_prompt(
     admin_user: User = Depends(get_current_admin)
 ):
     """Update a KB prompt (admin only)"""
+    from app.services.background_task_service import background_task_service
+    from app.db.models.background_job import JobType
+    from app.db.session import SessionLocal
+    from app.db.models.knowledge_base import KBPrompt
+
+    # Get original prompt to check if content changed
+    original_prompt = db.query(KBPrompt).filter(KBPrompt.id == prompt_id).first()
+    if not original_prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    original_content = original_prompt.content
+    original_title = original_prompt.title
+
+    # Update the prompt
     prompt = await knowledge_base_service.update_prompt(
         db, prompt_id, data.model_dump(exclude_unset=True)
     )
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
-    db.refresh(prompt)  # Refresh to get lounge relationship
-    return KBPromptResponse(
-        id=prompt.id,
-        title=prompt.title,
-        content=prompt.content,
-        description=prompt.description,
-        tags=prompt.tags,
-        is_active=prompt.is_active,
-        is_included_in_rag=prompt.is_included_in_rag,
-        usage_count=prompt.usage_count,
-        has_embedding=prompt.embedding is not None,
-        created_at=prompt.created_at,
-        updated_at=prompt.updated_at,
-        category_id=prompt.category_id,
-        category_name=prompt.category.name if prompt.category else None,
-        lounge_id=prompt.lounge_id,
-        lounge_name=prompt.lounge.title if prompt.lounge else None,
-        created_by_name=prompt.created_by.name if prompt.created_by else None
-    )
+    db.refresh(prompt)
+
+    # Check if we need to regenerate embedding
+    job_id = None
+    content_changed = (original_content != prompt.content) or (original_title != prompt.title)
+
+    if prompt.is_included_in_rag and content_changed:
+        # Clear existing embedding since content changed
+        prompt.embedding = None
+        db.commit()
+
+        # Create background job for embedding regeneration
+        job = background_task_service.create_job(
+            db=db,
+            job_type=JobType.PROMPT_EMBEDDING,
+            entity_type="prompt",
+            entity_id=prompt.id,
+            created_by_id=admin_user.id,
+            total_steps=3
+        )
+        job_id = job.id
+
+        # Start background task
+        background_task_service.start_background_task(
+            db_session_factory=SessionLocal,
+            job_id=job.id,
+            job_type=JobType.PROMPT_EMBEDDING,
+            entity_id=prompt.id
+        )
+
+    return {
+        "prompt": {
+            "id": prompt.id,
+            "title": prompt.title,
+            "content": prompt.content,
+            "description": prompt.description,
+            "tags": prompt.tags,
+            "is_active": prompt.is_active,
+            "is_included_in_rag": prompt.is_included_in_rag,
+            "usage_count": prompt.usage_count,
+            "has_embedding": prompt.embedding is not None,
+            "created_at": prompt.created_at.isoformat() if prompt.created_at else None,
+            "updated_at": prompt.updated_at.isoformat() if prompt.updated_at else None,
+            "category_id": prompt.category_id,
+            "category_name": prompt.category.name if prompt.category else None,
+            "lounge_id": prompt.lounge_id,
+            "lounge_name": prompt.lounge.title if prompt.lounge else None,
+            "created_by_name": prompt.created_by.name if prompt.created_by else None
+        },
+        "job_id": job_id
+    }
 
 
 @router.delete("/prompts/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -827,3 +902,45 @@ async def get_kb_stats(
     """Get KB statistics (admin only)"""
     stats = await knowledge_base_service.get_stats(db, lounge_id, include_global)
     return KBStatsResponse(**stats)
+
+
+# ============== Background Jobs ==============
+
+from app.services.background_task_service import background_task_service
+from app.db.models.background_job import BackgroundJob, JobStatus, JobType
+
+
+@router.get("/jobs/{job_id}")
+async def get_job_status(
+    job_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """Get status of a background job (admin only)"""
+    job = background_task_service.get_job(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.to_dict()
+
+
+@router.get("/jobs")
+async def list_active_jobs(
+    entity_type: Optional[str] = Query(None, description="Filter by entity type (prompt, document, faq)"),
+    entity_id: Optional[int] = Query(None, description="Filter by entity ID"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """List active background jobs (admin only)"""
+    jobs = background_task_service.get_active_jobs(db, entity_type, entity_id)
+    return [job.to_dict() for job in jobs]
+
+
+@router.get("/jobs/recent")
+async def list_recent_jobs(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """List recent background jobs (admin only)"""
+    jobs = background_task_service.get_recent_jobs(db, limit)
+    return [job.to_dict() for job in jobs]

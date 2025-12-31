@@ -3,8 +3,9 @@ AI Service for LLM integration
 Supports OpenAI GPT-4 and Anthropic Claude
 Includes RAG (Retrieval Augmented Generation) support
 """
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, AsyncGenerator
 import logging
+import json
 from openai import AsyncOpenAI
 import numpy as np
 from anthropic import AsyncAnthropic
@@ -134,7 +135,51 @@ class AIService:
         }
         
         return content, metadata
-    
+
+    async def generate_chat_response_stream(
+        self,
+        messages: List[Dict[str, str]],
+        context: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> AsyncGenerator[str, None]:
+        """
+        Generate AI chat response with streaming
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            context: Optional RAG context to inject
+            temperature: Sampling temperature (0-2)
+            max_tokens: Maximum tokens to generate
+
+        Yields:
+            Chunks of response text as they arrive
+        """
+        try:
+            # Inject context if provided
+            if context:
+                context_message = {
+                    "role": "system",
+                    "content": f"Use the following context to inform your responses:\n\n{context}"
+                }
+                messages = [context_message] + messages
+
+            response = await self.openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True
+            )
+
+            async for chunk in response:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            logger.error(f"Error generating streaming response: {str(e)}")
+            raise
+
     async def create_embedding(
         self,
         text: str,
