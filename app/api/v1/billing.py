@@ -13,7 +13,7 @@ from app.db.session import get_db
 from app.core.jwt import get_current_active_user
 from app.core.config import settings
 from app.db.models.user import User
-from app.db.models.billing import SubscriptionPlan, Subscription, Payment, LoungeSubscription
+from app.db.models.billing import SubscriptionPlan, Subscription, Payment, LoungeSubscription, SubscriptionStatus
 from app.schemas.billing import (
     SubscriptionPlanResponse,
     CheckoutSessionCreate,
@@ -559,6 +559,67 @@ async def cancel_lounge_subscription(
         )
 
 
+@router.post("/sync-subscription")
+async def sync_subscription_from_stripe(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Manually sync subscription status from Stripe.
+
+    Use this as a fallback when webhooks aren't working properly.
+    Syncs both regular subscriptions and lounge subscriptions.
+    """
+    synced = {"regular": 0, "lounge": 0, "errors": []}
+
+    # Sync regular subscriptions
+    regular_subs = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.stripe_subscription_id.isnot(None)
+    ).all()
+
+    for sub in regular_subs:
+        try:
+            stripe_sub = stripe.Subscription.retrieve(sub.stripe_subscription_id)
+            await billing_service.handle_subscription_updated(stripe_sub, db)
+            synced["regular"] += 1
+            logger.info(f"Synced regular subscription {sub.id} for user {current_user.id}")
+        except stripe.error.InvalidRequestError as e:
+            # Subscription doesn't exist in Stripe anymore
+            sub.status = SubscriptionStatus.CANCELED
+            db.commit()
+            synced["errors"].append(f"Regular sub {sub.id}: {str(e)}")
+        except Exception as e:
+            synced["errors"].append(f"Regular sub {sub.id}: {str(e)}")
+
+    # Sync lounge subscriptions
+    lounge_subs = db.query(LoungeSubscription).filter(
+        LoungeSubscription.user_id == current_user.id,
+        LoungeSubscription.stripe_subscription_id.isnot(None)
+    ).all()
+
+    for sub in lounge_subs:
+        try:
+            stripe_sub = stripe.Subscription.retrieve(sub.stripe_subscription_id)
+            await billing_service.handle_lounge_subscription_updated(stripe_sub, db)
+            synced["lounge"] += 1
+            logger.info(f"Synced lounge subscription {sub.id} for user {current_user.id}")
+        except stripe.error.InvalidRequestError as e:
+            # Subscription doesn't exist in Stripe anymore
+            sub.status = SubscriptionStatus.CANCELED
+            db.commit()
+            synced["errors"].append(f"Lounge sub {sub.id}: {str(e)}")
+        except Exception as e:
+            synced["errors"].append(f"Lounge sub {sub.id}: {str(e)}")
+
+    return {
+        "message": "Subscription sync completed",
+        "synced_regular": synced["regular"],
+        "synced_lounge": synced["lounge"],
+        "errors": synced["errors"] if synced["errors"] else None
+    }
+
+
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
@@ -625,6 +686,44 @@ async def stripe_webhook(
                 await billing_service.handle_lounge_subscription_updated(event_data, db)
             else:
                 await billing_service.handle_subscription_updated(event_data, db)
+
+        elif event_type == 'invoice.paid':
+            # Handle successful subscription renewal
+            subscription_id = event_data.get('subscription')
+            if subscription_id:
+                logger.info(f"Invoice paid for subscription {subscription_id}")
+                # Fetch the updated subscription from Stripe
+                try:
+                    stripe_sub = stripe.Subscription.retrieve(subscription_id)
+                    # Check if it's a lounge subscription
+                    lounge_sub = db.query(LoungeSubscription).filter(
+                        LoungeSubscription.stripe_subscription_id == subscription_id
+                    ).first()
+                    if lounge_sub:
+                        await billing_service.handle_lounge_subscription_updated(stripe_sub, db)
+                    else:
+                        await billing_service.handle_subscription_updated(stripe_sub, db)
+                except Exception as e:
+                    logger.error(f"Error processing invoice.paid: {str(e)}")
+
+        elif event_type == 'invoice.payment_failed':
+            # Handle failed subscription renewal payment
+            subscription_id = event_data.get('subscription')
+            if subscription_id:
+                logger.warning(f"Invoice payment failed for subscription {subscription_id}")
+                # Fetch the updated subscription from Stripe to get its current status
+                try:
+                    stripe_sub = stripe.Subscription.retrieve(subscription_id)
+                    # Check if it's a lounge subscription
+                    lounge_sub = db.query(LoungeSubscription).filter(
+                        LoungeSubscription.stripe_subscription_id == subscription_id
+                    ).first()
+                    if lounge_sub:
+                        await billing_service.handle_lounge_subscription_updated(stripe_sub, db)
+                    else:
+                        await billing_service.handle_subscription_updated(stripe_sub, db)
+                except Exception as e:
+                    logger.error(f"Error processing invoice.payment_failed: {str(e)}")
 
         elif event_type == 'payment_intent.succeeded':
             await billing_service.handle_payment_succeeded(event_data, db)

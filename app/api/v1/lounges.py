@@ -34,8 +34,32 @@ from app.schemas.lounge import (
     UpdateMemberRole
 )
 from app.services.file_service import file_service
+from app.core.config import settings
 
 router = APIRouter()
+
+
+def normalize_avatar_url(avatar_url: Optional[str]) -> Optional[str]:
+    """
+    Normalize avatar URL to ensure it's a full URL.
+
+    - If None or empty, returns None
+    - If already a full URL (http/https), returns as-is
+    - If relative path, prepends BASE_URL
+    """
+    if not avatar_url:
+        return None
+
+    # Already a full URL
+    if avatar_url.startswith(('http://', 'https://')):
+        return avatar_url
+
+    # Relative path - prepend BASE_URL
+    base_url = settings.BASE_URL.rstrip('/')
+    if avatar_url.startswith('/'):
+        return f"{base_url}{avatar_url}"
+    else:
+        return f"{base_url}/{avatar_url}"
 
 
 async def get_profile_image_url(lounge: Lounge, db: Session) -> Optional[str]:
@@ -99,7 +123,7 @@ async def get_my_lounges(
             "profile_image_url": profile_image_url,
             "created_at": lounge.created_at,
             "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
-            "mentor_avatar": lounge.mentor.user.avatar_url if lounge.mentor else None,
+            "mentor_avatar": normalize_avatar_url(lounge.mentor.user.avatar_url) if lounge.mentor else None,
             "category_name": lounge.category.name if lounge.category else None,
             "member_count": member_count,
             "is_member": True
@@ -194,7 +218,7 @@ async def list_lounges(
             "profile_image_url": profile_image_url,
             "created_at": lounge.created_at,
             "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
-            "mentor_avatar": lounge.mentor.user.avatar_url if lounge.mentor else None,
+            "mentor_avatar": normalize_avatar_url(lounge.mentor.user.avatar_url) if lounge.mentor else None,
             "category_name": lounge.category.name if lounge.category else None,
             "member_count": member_count,
             "is_full": is_full
@@ -285,7 +309,7 @@ async def create_lounge(
         profile_image_url=None,
         created_at=lounge.created_at,
         mentor_name=current_user.name,
-        mentor_avatar=current_user.avatar_url,
+        mentor_avatar=normalize_avatar_url(current_user.avatar_url),
         category_name=category.name,
         member_count=0,
         is_full=False,
@@ -376,7 +400,7 @@ async def get_lounge(
         monthly_price=LOUNGE_MONTHLY_PRICE_CENTS if lounge.stripe_monthly_price_id else None,
         yearly_price=LOUNGE_YEARLY_PRICE_CENTS if lounge.stripe_yearly_price_id else None,
         mentor_name=lounge.mentor.user.name if lounge.mentor else None,
-        mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,
+        mentor_avatar=normalize_avatar_url(lounge.mentor.user.avatar_url) if lounge.mentor else None,
         category_name=lounge.category.name if lounge.category else None,
         member_count=member_count,
         is_full=is_full,
@@ -475,7 +499,7 @@ async def update_lounge(
         profile_image_url=profile_image_url,
         created_at=lounge.created_at,
         mentor_name=current_user.name,
-        mentor_avatar=current_user.avatar_url,
+        mentor_avatar=normalize_avatar_url(current_user.avatar_url),
         category_name=lounge.category.name if lounge.category else None,
         member_count=member_count,
         is_full=is_full,
@@ -598,7 +622,7 @@ async def join_lounge(
         joined_at=membership.joined_at,
         left_at=membership.left_at,
         user_name=current_user.name,
-        user_avatar=current_user.avatar_url,
+        user_avatar=normalize_avatar_url(current_user.avatar_url),
         user_email=current_user.email
     )
 
@@ -692,7 +716,7 @@ async def get_lounge_members(
             joined_at=membership.joined_at,
             left_at=membership.left_at,
             user_name=user.name,
-            user_avatar=user.avatar_url,
+            user_avatar=normalize_avatar_url(user.avatar_url),
             user_email=user.email if is_mentor else None
         ))
 
@@ -788,7 +812,7 @@ async def upload_lounge_profile_image(
         profile_image_url=profile_image_url,
         created_at=lounge.created_at,
         mentor_name=lounge.mentor.user.name if lounge.mentor else None,
-        mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,
+        mentor_avatar=normalize_avatar_url(lounge.mentor.user.avatar_url) if lounge.mentor else None,
         category_name=lounge.category.name if lounge.category else None,
         member_count=member_count,
         is_full=is_full,
