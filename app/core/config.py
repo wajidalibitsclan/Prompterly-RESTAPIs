@@ -96,6 +96,10 @@ class Settings(BaseSettings):
             return v.lower() in ("true", "1", "yes")
         return bool(v)
     
+    # Logging
+    LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    LOG_FILE: Optional[str] = None  # Path to log file, e.g., "logs/app.log"
+
     # Sentry
     SENTRY_DSN: Optional[str] = None
     

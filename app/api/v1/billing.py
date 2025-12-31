@@ -623,20 +623,31 @@ async def sync_subscription_from_stripe(
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
-    db: Session = Depends(get_db),
-    stripe_signature: str = Header(None)
+    db: Session = Depends(get_db)
 ):
     """
     Stripe webhook endpoint
-    
+
     - Handles Stripe events
     - Validates webhook signature
     - Updates subscriptions and payments
     """
+    import traceback
+
     try:
         # Get raw body
         payload = await request.body()
-        
+
+        # Get signature from header (Stripe sends it as 'Stripe-Signature')
+        stripe_signature = request.headers.get('stripe-signature')
+
+        if not stripe_signature:
+            logger.error("Missing Stripe-Signature header")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing signature"
+            )
+
         # Verify webhook signature
         try:
             event = stripe.Webhook.construct_event(
@@ -652,6 +663,7 @@ async def stripe_webhook(
             )
         except stripe.error.SignatureVerificationError as e:
             logger.error(f"Invalid webhook signature: {str(e)}")
+            logger.error(f"Signature received: {stripe_signature[:50]}...")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid signature"
@@ -736,12 +748,14 @@ async def stripe_webhook(
         
         return {"status": "success"}
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing webhook: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Webhook processing failed"
-        )
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Return success anyway to prevent Stripe from retrying
+        # The error is logged for debugging
+        return {"status": "error", "message": str(e)}
 
 
 @router.get("/invoices")
