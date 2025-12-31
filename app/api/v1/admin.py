@@ -36,7 +36,6 @@ from app.schemas.admin import (
     PaginatedSubscriptionsResponse
 )
 from app.core.security import hash_password
-from app.core.config import settings
 from app.services.file_service import file_service
 from app.services.billing_service import billing_service
 import logging
@@ -44,29 +43,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def normalize_avatar_url(avatar_url: Optional[str]) -> Optional[str]:
-    """
-    Normalize avatar URL to ensure it's a full URL.
-
-    - If None or empty, returns None
-    - If already a full URL (http/https), returns as-is
-    - If relative path, prepends BASE_URL
-    """
-    if not avatar_url:
-        return None
-
-    # Already a full URL
-    if avatar_url.startswith(('http://', 'https://')):
-        return avatar_url
-
-    # Relative path - prepend BASE_URL
-    base_url = settings.BASE_URL.rstrip('/')
-    if avatar_url.startswith('/'):
-        return f"{base_url}{avatar_url}"
-    else:
-        return f"{base_url}/{avatar_url}"
 
 
 async def get_lounge_profile_image_url(lounge: Lounge, db: Session):
@@ -236,7 +212,7 @@ async def list_users(
             email=user.email,
             name=user.name,
             role=user.role.value,
-            avatar_url=normalize_avatar_url(user.avatar_url),
+            avatar_url=user.avatar_url,
             email_verified_at=user.email_verified_at,
             created_at=user.created_at,
             lounge_count=lounge_count,
@@ -1047,7 +1023,7 @@ async def get_user(
         "email": user.email,
         "name": user.name,
         "role": user.role.value,
-        "avatar_url": normalize_avatar_url(user.avatar_url),
+        "avatar_url": user.avatar_url,
         "email_verified_at": user.email_verified_at,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
@@ -1115,7 +1091,7 @@ async def update_user(
         "email": user.email,
         "name": user.name,
         "role": user.role.value,
-        "avatar_url": normalize_avatar_url(user.avatar_url),
+        "avatar_url": user.avatar_url,
         "email_verified_at": user.email_verified_at,
         "created_at": user.created_at,
         "updated_at": user.updated_at
@@ -1185,7 +1161,7 @@ async def upload_user_avatar(
             "email": user.email,
             "name": user.name,
             "role": user.role.value,
-            "avatar_url": normalize_avatar_url(user.avatar_url),
+            "avatar_url": user.avatar_url,
             "email_verified_at": user.email_verified_at,
             "created_at": user.created_at,
             "updated_at": user.updated_at
@@ -1234,7 +1210,7 @@ async def get_mentor(
         "user_id": mentor.user_id,
         "user_name": mentor.user.name,
         "user_email": mentor.user.email,
-        "user_avatar": normalize_avatar_url(mentor.user.avatar_url),
+        "user_avatar": mentor.user.avatar_url,
         "headline": mentor.headline,
         "bio": mentor.bio,
         "intro_video_url": mentor.intro_video_url,
@@ -1475,7 +1451,7 @@ async def get_user_subscriptions(
             user_id=sub.user_id,
             user_name=sub.user.name,
             user_email=sub.user.email,
-            user_avatar=normalize_avatar_url(sub.user.avatar_url),
+            user_avatar=sub.user.avatar_url,
             plan_id=sub.plan_id,
             plan_name=sub.plan.name,
             plan_price_cents=sub.plan.price_cents,
@@ -1570,7 +1546,7 @@ async def get_subscription_detail(
         "user_id": subscription.user_id,
         "user_name": subscription.user.name,
         "user_email": subscription.user.email,
-        "user_avatar": normalize_avatar_url(subscription.user.avatar_url),
+        "user_avatar": subscription.user.avatar_url,
         "plan_id": subscription.plan_id,
         "plan_name": subscription.plan.name,
         "plan_price_cents": subscription.plan.price_cents,
