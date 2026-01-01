@@ -711,9 +711,22 @@ async def stripe_webhook(
 
         elif event_type in ['invoice.paid', 'invoice_payment.paid']:
             # Handle successful subscription renewal
-            subscription_id = event_data.get('subscription')
             logger.info(f"Processing {event_type} event")
             logger.info(f"Event data keys: {list(event_data.keys())}")
+
+            subscription_id = event_data.get('subscription')
+
+            # For invoice_payment.paid, we need to get subscription from the invoice
+            if not subscription_id and event_data.get('invoice'):
+                invoice_id = event_data.get('invoice')
+                logger.info(f"No subscription in event, fetching from invoice {invoice_id}")
+                try:
+                    invoice = stripe.Invoice.retrieve(invoice_id)
+                    subscription_id = invoice.get('subscription')
+                    logger.info(f"Got subscription {subscription_id} from invoice")
+                except Exception as e:
+                    logger.error(f"Error fetching invoice {invoice_id}: {str(e)}")
+
             if subscription_id:
                 logger.info(f"Invoice paid for subscription {subscription_id}")
                 # Fetch the updated subscription from Stripe
@@ -737,7 +750,7 @@ async def stripe_webhook(
                     import traceback
                     logger.error(f"Traceback: {traceback.format_exc()}")
             else:
-                logger.warning(f"No subscription_id in {event_type} event")
+                logger.warning(f"No subscription_id found in {event_type} event")
 
         elif event_type in ['invoice.payment_failed', 'invoice_payment.failed']:
             # Handle failed subscription renewal payment
