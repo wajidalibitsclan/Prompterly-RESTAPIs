@@ -16,7 +16,7 @@ from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
 from app.db.models.lounge import Lounge, LoungeMembership, AccessType
 from app.db.models.mentor import Category
-from app.db.models.billing import Payment, SubscriptionStatus, LoungeSubscription
+from app.db.models.billing import Subscription, Payment, SubscriptionStatus, LoungeSubscription
 from app.db.models.note import Note
 from app.db.models.chat import ChatMessage
 from app.schemas.admin import (
