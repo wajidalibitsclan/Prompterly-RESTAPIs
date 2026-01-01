@@ -634,27 +634,36 @@ async def stripe_webhook(
     """
     import traceback
 
+    logger.info("=" * 50)
+    logger.info("STRIPE WEBHOOK RECEIVED")
+    logger.info("=" * 50)
+
     try:
         # Get raw body
         payload = await request.body()
+        logger.info(f"Payload size: {len(payload)} bytes")
 
         # Get signature from header (Stripe sends it as 'Stripe-Signature')
         stripe_signature = request.headers.get('stripe-signature')
+        logger.info(f"Stripe-Signature header present: {bool(stripe_signature)}")
 
         if not stripe_signature:
             logger.error("Missing Stripe-Signature header")
+            logger.error(f"All headers: {dict(request.headers)}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Missing signature"
             )
 
         # Verify webhook signature
+        logger.info(f"Webhook secret configured: {settings.STRIPE_WEBHOOK_SECRET[:10]}...{settings.STRIPE_WEBHOOK_SECRET[-4:]}")
         try:
             event = stripe.Webhook.construct_event(
                 payload,
                 stripe_signature,
                 settings.STRIPE_WEBHOOK_SECRET
             )
+            logger.info("Webhook signature verified successfully")
         except ValueError as e:
             logger.error(f"Invalid webhook payload: {str(e)}")
             raise HTTPException(
@@ -664,6 +673,7 @@ async def stripe_webhook(
         except stripe.error.SignatureVerificationError as e:
             logger.error(f"Invalid webhook signature: {str(e)}")
             logger.error(f"Signature received: {stripe_signature[:50]}...")
+            logger.error(f"Webhook secret being used: {settings.STRIPE_WEBHOOK_SECRET[:10]}...")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid signature"
