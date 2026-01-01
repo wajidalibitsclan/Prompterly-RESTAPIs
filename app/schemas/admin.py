@@ -204,35 +204,25 @@ class PaginatedMentorsResponse(BaseModel):
 # Subscription Management Schemas
 # =============================================================================
 
-class LoungeSubscriptionInfo(BaseModel):
-    """Schema for lounge info in subscription context"""
-    id: int
-    title: str
-    slug: str
-    access_type: str
-    mentor_name: Optional[str] = None
-    profile_image_url: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
 class UserSubscriptionResponse(BaseModel):
-    """Schema for user subscription details"""
+    """Schema for lounge subscription details"""
     subscription_id: int
     user_id: int
     user_name: str
     user_email: str
     user_avatar: Optional[str] = None
-    plan_id: int
-    plan_name: str
+    lounge_id: int
+    lounge_title: str
+    lounge_slug: str
+    lounge_mentor_name: Optional[str] = None
+    lounge_profile_image_url: Optional[str] = None
+    plan_type: str  # 'monthly' or 'yearly'
     plan_price_cents: int
-    billing_interval: str
     status: str
+    stripe_subscription_id: str
     started_at: datetime
-    renews_at: datetime
+    renews_at: Optional[datetime] = None
     canceled_at: Optional[datetime] = None
-    lounges: List[LoungeSubscriptionInfo] = []
 
     class Config:
         from_attributes = True

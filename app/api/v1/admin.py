@@ -16,7 +16,7 @@ from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
 from app.db.models.lounge import Lounge, LoungeMembership, AccessType
 from app.db.models.mentor import Category
-from app.db.models.billing import Subscription, Payment, SubscriptionStatus, SubscriptionPlan
+from app.db.models.billing import Payment, SubscriptionStatus, LoungeSubscription
 from app.db.models.note import Note
 from app.db.models.chat import ChatMessage
 from app.schemas.admin import (
@@ -31,7 +31,6 @@ from app.schemas.admin import (
     UpdateUserRequest,
     CreateMentorRequest,
     UpdateMentorRequest,
-    LoungeSubscriptionInfo,
     UserSubscriptionResponse,
     PaginatedSubscriptionsResponse
 )
@@ -1389,23 +1388,23 @@ async def get_user_subscriptions(
     search: Optional[str] = None
 ):
     """
-    Get all user subscriptions with lounge details
+    Get all lounge subscriptions
 
     - Requires admin role
     - Shows which users have subscribed to which lounges
     - Supports filtering by status and search by user name/email
     """
-    query = db.query(Subscription).join(
-        User, Subscription.user_id == User.id
+    query = db.query(LoungeSubscription).join(
+        User, LoungeSubscription.user_id == User.id
     ).join(
-        SubscriptionPlan, Subscription.plan_id == SubscriptionPlan.id
+        Lounge, LoungeSubscription.lounge_id == Lounge.id
     )
 
     # Filter by status
     if status_filter:
         try:
             status_enum = SubscriptionStatus(status_filter)
-            query = query.filter(Subscription.status == status_enum)
+            query = query.filter(LoungeSubscription.status == status_enum)
         except ValueError:
             pass  # Ignore invalid status
 
@@ -1424,27 +1423,16 @@ async def get_user_subscriptions(
 
     # Get subscriptions with ordering
     subscriptions = query.order_by(
-        Subscription.started_at.desc()
+        LoungeSubscription.started_at.desc()
     ).offset(skip).limit(limit).all()
 
     items = []
     for sub in subscriptions:
-        # Get lounges associated with this subscription's plan
-        lounges = db.query(Lounge).filter(
-            Lounge.plan_id == sub.plan_id
-        ).all()
+        lounge = sub.lounge
+        profile_image_url = await get_lounge_profile_image_url(lounge, db)
 
-        lounge_infos = []
-        for lounge in lounges:
-            profile_image_url = await get_lounge_profile_image_url(lounge, db)
-            lounge_infos.append(LoungeSubscriptionInfo(
-                id=lounge.id,
-                title=lounge.title,
-                slug=lounge.slug,
-                access_type=lounge.access_type.value,
-                mentor_name=lounge.mentor.user.name if lounge.mentor else None,
-                profile_image_url=profile_image_url
-            ))
+        # Determine price based on plan type
+        price_cents = 2500 if sub.plan_type.value == 'monthly' else 24000  # $25/mo or $240/yr
 
         items.append(UserSubscriptionResponse(
             subscription_id=sub.id,
@@ -1452,15 +1440,18 @@ async def get_user_subscriptions(
             user_name=sub.user.name,
             user_email=sub.user.email,
             user_avatar=sub.user.avatar_url,
-            plan_id=sub.plan_id,
-            plan_name=sub.plan.name,
-            plan_price_cents=sub.plan.price_cents,
-            billing_interval=sub.plan.billing_interval.value,
+            lounge_id=lounge.id,
+            lounge_title=lounge.title,
+            lounge_slug=lounge.slug,
+            lounge_mentor_name=lounge.mentor.user.name if lounge.mentor else None,
+            lounge_profile_image_url=profile_image_url,
+            plan_type=sub.plan_type.value,
+            plan_price_cents=price_cents,
             status=sub.status.value,
+            stripe_subscription_id=sub.stripe_subscription_id,
             started_at=sub.started_at,
             renews_at=sub.renews_at,
-            canceled_at=sub.canceled_at,
-            lounges=lounge_infos
+            canceled_at=sub.canceled_at
         ))
 
     # Calculate total pages
@@ -1482,10 +1473,10 @@ async def get_subscription_detail(
     admin_user: User = Depends(get_current_admin)
 ):
     """
-    Get detailed subscription information (admin only)
+    Get detailed lounge subscription information (admin only)
     """
-    subscription = db.query(Subscription).filter(
-        Subscription.id == subscription_id
+    subscription = db.query(LoungeSubscription).filter(
+        LoungeSubscription.id == subscription_id
     ).first()
 
     if not subscription:
@@ -1494,36 +1485,18 @@ async def get_subscription_detail(
             detail="Subscription not found"
         )
 
-    # Get lounges associated with this plan
-    lounges = db.query(Lounge).filter(
-        Lounge.plan_id == subscription.plan_id
-    ).all()
+    lounge = subscription.lounge
+    profile_image_url = await get_lounge_profile_image_url(lounge, db)
+    member_count = db.query(func.count(LoungeMembership.id)).filter(
+        LoungeMembership.lounge_id == lounge.id,
+        LoungeMembership.left_at.is_(None)
+    ).scalar()
 
-    lounge_details = []
-    for lounge in lounges:
-        profile_image_url = await get_lounge_profile_image_url(lounge, db)
-        member_count = db.query(func.count(LoungeMembership.id)).filter(
-            LoungeMembership.lounge_id == lounge.id,
-            LoungeMembership.left_at.is_(None)
-        ).scalar()
-
-        # Check if user is a member of this lounge
-        is_member = db.query(LoungeMembership).filter(
-            LoungeMembership.lounge_id == lounge.id,
-            LoungeMembership.user_id == subscription.user_id,
-            LoungeMembership.left_at.is_(None)
-        ).first() is not None
-
-        lounge_details.append({
-            "id": lounge.id,
-            "title": lounge.title,
-            "slug": lounge.slug,
-            "access_type": lounge.access_type.value,
-            "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
-            "profile_image_url": profile_image_url,
-            "member_count": member_count,
-            "user_is_member": is_member
-        })
+    is_member = db.query(LoungeMembership).filter(
+        LoungeMembership.lounge_id == lounge.id,
+        LoungeMembership.user_id == subscription.user_id,
+        LoungeMembership.left_at.is_(None)
+    ).first() is not None
 
     # Get payment history for this user
     payments = db.query(Payment).filter(
@@ -1541,21 +1514,27 @@ async def get_subscription_detail(
             "created_at": payment.created_at
         })
 
+    price_cents = 2500 if subscription.plan_type.value == 'monthly' else 24000
+
     return {
         "subscription_id": subscription.id,
         "user_id": subscription.user_id,
         "user_name": subscription.user.name,
         "user_email": subscription.user.email,
         "user_avatar": subscription.user.avatar_url,
-        "plan_id": subscription.plan_id,
-        "plan_name": subscription.plan.name,
-        "plan_price_cents": subscription.plan.price_cents,
-        "billing_interval": subscription.plan.billing_interval.value,
+        "lounge_id": lounge.id,
+        "lounge_title": lounge.title,
+        "lounge_slug": lounge.slug,
+        "lounge_mentor_name": lounge.mentor.user.name if lounge.mentor else None,
+        "lounge_profile_image_url": profile_image_url,
+        "lounge_member_count": member_count,
+        "user_is_lounge_member": is_member,
+        "plan_type": subscription.plan_type.value,
+        "plan_price_cents": price_cents,
         "stripe_subscription_id": subscription.stripe_subscription_id,
         "status": subscription.status.value,
         "started_at": subscription.started_at,
         "renews_at": subscription.renews_at,
         "canceled_at": subscription.canceled_at,
-        "lounges": lounge_details,
         "payment_history": payment_history
     }
