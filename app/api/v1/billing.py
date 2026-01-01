@@ -26,7 +26,8 @@ from app.schemas.billing import (
     LoungeCheckoutCreate,
     LoungeSubscriptionResponse,
     CancelLoungeSubscriptionRequest,
-    LoungePricing
+    LoungePricing,
+    UpgradeLoungeSubscriptionRequest
 )
 from app.services.billing_service import billing_service
 
@@ -556,6 +557,65 @@ async def cancel_lounge_subscription(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error canceling subscription: {str(e)}"
+        )
+
+
+@router.post("/lounge/{lounge_id}/subscription/upgrade", response_model=LoungeSubscriptionResponse)
+async def upgrade_lounge_subscription(
+    lounge_id: int,
+    upgrade_data: UpgradeLoungeSubscriptionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Upgrade lounge subscription from monthly to yearly
+
+    - Only monthly subscriptions can be upgraded to yearly
+    - Yearly subscriptions cannot be downgraded to monthly
+    - By default, prorates the upgrade (charges the difference immediately)
+    - Set prorate=false to apply at next billing cycle
+    """
+    try:
+        subscription = await billing_service.upgrade_lounge_subscription(
+            user_id=current_user.id,
+            lounge_id=lounge_id,
+            db=db,
+            prorate=upgrade_data.prorate
+        )
+
+        lounge = subscription.lounge
+
+        days_until = None
+        if subscription.renews_at:
+            delta = subscription.renews_at - datetime.utcnow()
+            days_until = max(0, delta.days)
+
+        return LoungeSubscriptionResponse(
+            id=subscription.id,
+            user_id=subscription.user_id,
+            lounge_id=subscription.lounge_id,
+            plan_type=subscription.plan_type.value,
+            stripe_subscription_id=subscription.stripe_subscription_id,
+            stripe_price_id=subscription.stripe_price_id,
+            status=subscription.status.value,
+            started_at=subscription.started_at,
+            renews_at=subscription.renews_at,
+            canceled_at=subscription.canceled_at,
+            lounge_title=lounge.title,
+            lounge_slug=lounge.slug,
+            is_active=subscription.is_active,
+            days_until_renewal=days_until
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error upgrading subscription: {str(e)}"
         )
 
 

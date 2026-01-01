@@ -150,3 +150,8 @@ class LoungePricing(BaseModel):
     monthly_price_display: str = "$25/month"
     yearly_price_display: str = "$240/year"
     yearly_savings_percent: int = 20
+
+
+class UpgradeLoungeSubscriptionRequest(BaseModel):
+    """Schema for upgrading lounge subscription from monthly to yearly"""
+    prorate: bool = True  # Whether to prorate the upgrade (charge difference immediately)

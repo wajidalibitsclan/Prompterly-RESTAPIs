@@ -976,6 +976,97 @@ class BillingService:
 
         return query.all()
 
+    async def upgrade_lounge_subscription(
+        self,
+        user_id: int,
+        lounge_id: int,
+        db: Session,
+        prorate: bool = True
+    ) -> LoungeSubscription:
+        """
+        Upgrade lounge subscription from monthly to yearly
+
+        Args:
+            user_id: User ID
+            lounge_id: Lounge ID
+            db: Database session
+            prorate: Whether to prorate (charge difference immediately)
+
+        Returns:
+            Updated lounge subscription
+
+        Raises:
+            ValueError: If no active subscription, not monthly, or lounge not configured
+        """
+        # Find active subscription
+        subscription = db.query(LoungeSubscription).filter(
+            LoungeSubscription.user_id == user_id,
+            LoungeSubscription.lounge_id == lounge_id,
+            LoungeSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.TRIALING
+            ])
+        ).first()
+
+        if not subscription:
+            raise ValueError("No active subscription found for this lounge")
+
+        # Check if already yearly
+        if subscription.plan_type == LoungePlanType.YEARLY:
+            raise ValueError("Subscription is already on yearly plan. Cannot downgrade to monthly.")
+
+        # Get lounge for yearly price ID
+        lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+        if not lounge:
+            raise ValueError("Lounge not found")
+
+        if not lounge.stripe_yearly_price_id:
+            raise ValueError("Lounge does not have yearly price configured")
+
+        try:
+            # Get current Stripe subscription to find the subscription item ID
+            stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+            subscription_item_id = stripe_sub['items']['data'][0]['id']
+
+            # Update subscription in Stripe to yearly price
+            updated_stripe_sub = stripe.Subscription.modify(
+                subscription.stripe_subscription_id,
+                items=[{
+                    'id': subscription_item_id,
+                    'price': lounge.stripe_yearly_price_id,
+                }],
+                proration_behavior='create_prorations' if prorate else 'none',
+                metadata={
+                    'upgraded_from': 'monthly',
+                    'upgraded_at': datetime.utcnow().isoformat()
+                }
+            )
+
+            # Update local subscription record
+            subscription.plan_type = LoungePlanType.YEARLY
+            subscription.stripe_price_id = lounge.stripe_yearly_price_id
+
+            # Update renewal date from Stripe response
+            current_period_end = None
+            if hasattr(updated_stripe_sub, 'current_period') and updated_stripe_sub.current_period:
+                current_period_end = updated_stripe_sub.current_period.get('end')
+            if not current_period_end:
+                current_period_end = updated_stripe_sub.get('current_period_end')
+
+            if current_period_end:
+                subscription.renews_at = datetime.fromtimestamp(current_period_end)
+
+            db.commit()
+            db.refresh(subscription)
+
+            logger.info(f"Upgraded lounge subscription {subscription.id} from monthly to yearly (prorate={prorate})")
+
+            return subscription
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error upgrading subscription: {str(e)}")
+            raise Exception(f"Failed to upgrade subscription: {str(e)}")
+
 
 # Singleton instance
 billing_service = BillingService()
