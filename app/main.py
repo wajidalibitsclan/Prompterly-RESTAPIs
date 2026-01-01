@@ -18,7 +18,7 @@ from app.core.exceptions import AppException
 from app.core.logging import setup_logging, get_logger, log_api_request, log_error
 from app.db.session import init_db
 
-# Setup logging first (using config settings)
+# Setup logging
 setup_logging(
     log_level=settings.LOG_LEVEL,
     log_file=settings.LOG_FILE
