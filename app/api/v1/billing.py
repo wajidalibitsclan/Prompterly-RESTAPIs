@@ -688,10 +688,21 @@ async def stripe_webhook(
         if event_type == 'checkout.session.completed':
             # Check if this is a lounge subscription by looking at metadata
             metadata = event_data.get('metadata', {})
+            logger.info(f"Checkout session completed - metadata: {metadata}")
+            logger.info(f"Session ID: {event_data.get('id')}, Subscription: {event_data.get('subscription')}")
+
             if metadata.get('subscription_type') == 'lounge':
-                logger.info(f"Processing lounge checkout completion for lounge {metadata.get('lounge_id')}")
-                await billing_service.handle_lounge_checkout_completed(event_data, db)
+                logger.info(f"Processing LOUNGE checkout for user {metadata.get('user_id')}, lounge {metadata.get('lounge_id')}")
+                try:
+                    await billing_service.handle_lounge_checkout_completed(event_data, db)
+                    logger.info("Lounge checkout completed successfully - subscription and membership created")
+                except Exception as e:
+                    logger.error(f"Error in handle_lounge_checkout_completed: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    raise
             else:
+                logger.info(f"Processing REGULAR checkout for user {metadata.get('user_id')}")
                 await billing_service.handle_checkout_completed(event_data, db)
 
         elif event_type in ['customer.subscription.updated', 'customer.subscription.deleted']:
