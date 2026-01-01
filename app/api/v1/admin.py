@@ -31,6 +31,7 @@ from app.schemas.admin import (
     UpdateUserRequest,
     CreateMentorRequest,
     UpdateMentorRequest,
+    LoungeInfo,
     UserSubscriptionResponse,
     PaginatedSubscriptionsResponse
 )
@@ -1431,8 +1432,20 @@ async def get_user_subscriptions(
         lounge = sub.lounge
         profile_image_url = await get_lounge_profile_image_url(lounge, db)
 
-        # Determine price based on plan type
+        # Determine price and billing interval based on plan type
         price_cents = 2500 if sub.plan_type.value == 'monthly' else 24000  # $25/mo or $240/yr
+        billing_interval = 'month' if sub.plan_type.value == 'monthly' else 'year'
+        plan_name = f"{lounge.title} - {'Monthly' if sub.plan_type.value == 'monthly' else 'Yearly'}"
+
+        # Build lounge info for frontend compatibility
+        lounge_info = LoungeInfo(
+            id=lounge.id,
+            title=lounge.title,
+            slug=lounge.slug,
+            access_type=lounge.access_type.value,
+            mentor_name=lounge.mentor.user.name if lounge.mentor else None,
+            profile_image_url=profile_image_url
+        )
 
         items.append(UserSubscriptionResponse(
             subscription_id=sub.id,
@@ -1440,13 +1453,14 @@ async def get_user_subscriptions(
             user_name=sub.user.name,
             user_email=sub.user.email,
             user_avatar=sub.user.avatar_url,
+            plan_name=plan_name,
+            plan_price_cents=price_cents,
+            billing_interval=billing_interval,
             lounge_id=lounge.id,
             lounge_title=lounge.title,
             lounge_slug=lounge.slug,
-            lounge_mentor_name=lounge.mentor.user.name if lounge.mentor else None,
-            lounge_profile_image_url=profile_image_url,
+            lounges=[lounge_info],
             plan_type=sub.plan_type.value,
-            plan_price_cents=price_cents,
             status=sub.status.value,
             stripe_subscription_id=sub.stripe_subscription_id,
             started_at=sub.started_at,

@@ -204,6 +204,19 @@ class PaginatedMentorsResponse(BaseModel):
 # Subscription Management Schemas
 # =============================================================================
 
+class LoungeInfo(BaseModel):
+    """Schema for lounge info in subscription context"""
+    id: int
+    title: str
+    slug: str
+    access_type: str
+    mentor_name: Optional[str] = None
+    profile_image_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class UserSubscriptionResponse(BaseModel):
     """Schema for lounge subscription details"""
     subscription_id: int
@@ -211,13 +224,17 @@ class UserSubscriptionResponse(BaseModel):
     user_name: str
     user_email: str
     user_avatar: Optional[str] = None
+    # Plan info for frontend compatibility
+    plan_name: str  # e.g. "Leadership Lounge - Monthly"
+    plan_price_cents: int
+    billing_interval: str  # 'month' or 'year'
+    # Lounge details
     lounge_id: int
     lounge_title: str
     lounge_slug: str
-    lounge_mentor_name: Optional[str] = None
-    lounge_profile_image_url: Optional[str] = None
+    lounges: List[LoungeInfo] = []  # For frontend compatibility
+    # Subscription details
     plan_type: str  # 'monthly' or 'yearly'
-    plan_price_cents: int
     status: str
     stripe_subscription_id: str
     started_at: datetime
