@@ -709,26 +709,37 @@ async def stripe_webhook(
             else:
                 await billing_service.handle_subscription_updated(event_data, db)
 
-        elif event_type == 'invoice.paid':
+        elif event_type in ['invoice.paid', 'invoice_payment.paid']:
             # Handle successful subscription renewal
             subscription_id = event_data.get('subscription')
+            logger.info(f"Processing {event_type} event")
+            logger.info(f"Event data keys: {list(event_data.keys())}")
             if subscription_id:
                 logger.info(f"Invoice paid for subscription {subscription_id}")
                 # Fetch the updated subscription from Stripe
                 try:
                     stripe_sub = stripe.Subscription.retrieve(subscription_id)
+                    logger.info(f"Retrieved subscription from Stripe: status={stripe_sub.get('status')}")
                     # Check if it's a lounge subscription
                     lounge_sub = db.query(LoungeSubscription).filter(
                         LoungeSubscription.stripe_subscription_id == subscription_id
                     ).first()
                     if lounge_sub:
+                        logger.info(f"Found lounge subscription {lounge_sub.id}, updating...")
                         await billing_service.handle_lounge_subscription_updated(stripe_sub, db)
+                        logger.info(f"Lounge subscription {lounge_sub.id} updated successfully")
                     else:
+                        logger.info("Not a lounge subscription, checking regular subscriptions...")
                         await billing_service.handle_subscription_updated(stripe_sub, db)
+                        logger.info("Regular subscription updated successfully")
                 except Exception as e:
                     logger.error(f"Error processing invoice.paid: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+            else:
+                logger.warning(f"No subscription_id in {event_type} event")
 
-        elif event_type == 'invoice.payment_failed':
+        elif event_type in ['invoice.payment_failed', 'invoice_payment.failed']:
             # Handle failed subscription renewal payment
             subscription_id = event_data.get('subscription')
             if subscription_id:
