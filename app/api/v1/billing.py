@@ -709,7 +709,7 @@ async def stripe_webhook(
             else:
                 await billing_service.handle_subscription_updated(event_data, db)
 
-        elif event_type in ['invoice.paid', 'invoice_payment.paid']:
+        elif event_type in ['invoice.paid', 'invoice_payment.paid', 'invoice.payment_succeeded']:
             # Handle successful subscription renewal
             logger.info(f"Processing {event_type} event")
             logger.info(f"Event data keys: {list(event_data.keys())}")
@@ -722,7 +722,14 @@ async def stripe_webhook(
                 logger.info(f"No subscription in event, fetching from invoice {invoice_id}")
                 try:
                     invoice = stripe.Invoice.retrieve(invoice_id)
+                    # Try direct subscription field first
                     subscription_id = invoice.get('subscription')
+                    # If not found, check parent.subscription_details (new Stripe API structure)
+                    if not subscription_id:
+                        parent = invoice.get('parent', {})
+                        if parent and parent.get('subscription_details'):
+                            subscription_id = parent['subscription_details'].get('subscription')
+                            logger.info(f"Found subscription in parent.subscription_details: {subscription_id}")
                     logger.info(f"Got subscription {subscription_id} from invoice")
                 except Exception as e:
                     logger.error(f"Error fetching invoice {invoice_id}: {str(e)}")
@@ -754,7 +761,22 @@ async def stripe_webhook(
 
         elif event_type in ['invoice.payment_failed', 'invoice_payment.failed']:
             # Handle failed subscription renewal payment
+            logger.info(f"Processing {event_type} event")
             subscription_id = event_data.get('subscription')
+
+            # Try to get subscription from invoice if not directly available
+            if not subscription_id and event_data.get('invoice'):
+                invoice_id = event_data.get('invoice')
+                try:
+                    invoice = stripe.Invoice.retrieve(invoice_id)
+                    subscription_id = invoice.get('subscription')
+                    if not subscription_id:
+                        parent = invoice.get('parent', {})
+                        if parent and parent.get('subscription_details'):
+                            subscription_id = parent['subscription_details'].get('subscription')
+                except Exception as e:
+                    logger.error(f"Error fetching invoice: {str(e)}")
+
             if subscription_id:
                 logger.warning(f"Invoice payment failed for subscription {subscription_id}")
                 # Fetch the updated subscription from Stripe to get its current status
@@ -770,6 +792,8 @@ async def stripe_webhook(
                         await billing_service.handle_subscription_updated(stripe_sub, db)
                 except Exception as e:
                     logger.error(f"Error processing invoice.payment_failed: {str(e)}")
+            else:
+                logger.warning(f"No subscription_id found in {event_type} event")
 
         elif event_type == 'payment_intent.succeeded':
             await billing_service.handle_payment_succeeded(event_data, db)
