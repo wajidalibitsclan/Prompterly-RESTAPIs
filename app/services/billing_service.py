@@ -242,23 +242,23 @@ class BillingService:
     ):
         """
         Handle subscription update from Stripe
-        
+
         Args:
             subscription: Stripe subscription object
             db: Database session
         """
         try:
             stripe_sub_id = subscription['id']
-            
+
             # Find subscription
             sub = db.query(Subscription).filter(
                 Subscription.stripe_subscription_id == stripe_sub_id
             ).first()
-            
+
             if not sub:
                 logger.warning(f"Subscription {stripe_sub_id} not found in database")
                 return
-            
+
             # Update status
             status_map = {
                 'active': SubscriptionStatus.ACTIVE,
@@ -267,13 +267,21 @@ class BillingService:
                 'canceled': SubscriptionStatus.CANCELED,
                 'unpaid': SubscriptionStatus.PAST_DUE
             }
-            
-            new_status = status_map.get(subscription['status'], SubscriptionStatus.CANCELED)
+
+            new_status = status_map.get(subscription.get('status'), SubscriptionStatus.CANCELED)
             sub.status = new_status
-            
-            # Update renewal date
-            if subscription.get('current_period_end'):
-                sub.renews_at = datetime.fromtimestamp(subscription['current_period_end'])
+
+            # Update renewal date - handle both old and new Stripe API structures
+            current_period_end = None
+            # Try new structure (current_period object)
+            if hasattr(subscription, 'current_period') and subscription.current_period:
+                current_period_end = subscription.current_period.get('end')
+            # Fallback to old structure
+            if not current_period_end:
+                current_period_end = subscription.get('current_period_end')
+
+            if current_period_end:
+                sub.renews_at = datetime.fromtimestamp(current_period_end)
             
             # Update cancellation date if canceled
             if subscription.get('canceled_at'):
@@ -673,6 +681,8 @@ class BillingService:
             lounge_id = int(session['metadata']['lounge_id'])
             plan_type_str = session['metadata']['plan_type']
 
+            logger.info(f"Processing lounge checkout: user={user_id}, lounge={lounge_id}, plan={plan_type_str}")
+
             # Map plan type string to enum
             plan_type = LoungePlanType.MONTHLY if plan_type_str == 'monthly' else LoungePlanType.YEARLY
 
@@ -680,8 +690,44 @@ class BillingService:
             subscription_id = session['subscription']
             stripe_sub = stripe.Subscription.retrieve(subscription_id)
 
-            # Get the price ID from the subscription
-            price_id = stripe_sub['items']['data'][0]['price']['id']
+            logger.info(f"Retrieved Stripe subscription: {subscription_id}")
+            logger.info(f"Subscription keys: {list(stripe_sub.keys()) if hasattr(stripe_sub, 'keys') else 'N/A'}")
+
+            # Get the price ID from the subscription - handle new API structure
+            try:
+                price_id = stripe_sub['items']['data'][0]['price']['id']
+            except (KeyError, IndexError) as e:
+                logger.warning(f"Could not get price_id from subscription: {e}")
+                price_id = None
+
+            # Get period dates - handle both old and new Stripe API structures
+            # New API uses 'current_period' object, old API uses direct fields
+            current_period_start = None
+            current_period_end = None
+
+            # Try new structure first (current_period object)
+            if hasattr(stripe_sub, 'current_period') and stripe_sub.current_period:
+                current_period_start = stripe_sub.current_period.get('start')
+                current_period_end = stripe_sub.current_period.get('end')
+                logger.info("Using current_period object structure")
+
+            # Fallback to old structure (direct fields)
+            if not current_period_start:
+                current_period_start = stripe_sub.get('current_period_start')
+                current_period_end = stripe_sub.get('current_period_end')
+                logger.info("Using direct field structure")
+
+            # If still not found, use current time as fallback
+            if not current_period_start:
+                logger.warning("Could not find period dates, using current time")
+                current_period_start = datetime.utcnow().timestamp()
+                # Default to 1 month or 1 year based on plan
+                if plan_type == LoungePlanType.YEARLY:
+                    current_period_end = (datetime.utcnow() + timedelta(days=365)).timestamp()
+                else:
+                    current_period_end = (datetime.utcnow() + timedelta(days=30)).timestamp()
+
+            logger.info(f"Period: start={current_period_start}, end={current_period_end}")
 
             # Create lounge subscription record
             lounge_subscription = LoungeSubscription(
@@ -691,8 +737,8 @@ class BillingService:
                 stripe_subscription_id=subscription_id,
                 stripe_price_id=price_id,
                 status=SubscriptionStatus.ACTIVE,
-                started_at=datetime.fromtimestamp(stripe_sub['current_period_start']),
-                renews_at=datetime.fromtimestamp(stripe_sub['current_period_end'])
+                started_at=datetime.fromtimestamp(current_period_start),
+                renews_at=datetime.fromtimestamp(current_period_end)
             )
 
             db.add(lounge_subscription)
@@ -757,13 +803,21 @@ class BillingService:
                 'unpaid': SubscriptionStatus.PAST_DUE
             }
 
-            new_status = status_map.get(subscription['status'], SubscriptionStatus.CANCELED)
+            new_status = status_map.get(subscription.get('status'), SubscriptionStatus.CANCELED)
             old_status = lounge_sub.status
             lounge_sub.status = new_status
 
-            # Update renewal date
-            if subscription.get('current_period_end'):
-                lounge_sub.renews_at = datetime.fromtimestamp(subscription['current_period_end'])
+            # Update renewal date - handle both old and new Stripe API structures
+            current_period_end = None
+            # Try new structure (current_period object)
+            if hasattr(subscription, 'current_period') and subscription.current_period:
+                current_period_end = subscription.current_period.get('end')
+            # Fallback to old structure
+            if not current_period_end:
+                current_period_end = subscription.get('current_period_end')
+
+            if current_period_end:
+                lounge_sub.renews_at = datetime.fromtimestamp(current_period_end)
 
             # Update cancellation date if canceled
             if subscription.get('canceled_at'):
