@@ -4,7 +4,7 @@ Handles note management, search, and time capsules
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from typing import List, Optional
 from datetime import datetime
 
@@ -27,56 +27,75 @@ from app.services.note_service import note_service
 router = APIRouter()
 
 
-@router.get("/", response_model=List[NoteListResponse])
+@router.get("/")
 async def list_notes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    page: int = Query(1, ge=1),
     pinned_only: bool = False,
     tags: Optional[str] = None  # Comma-separated tags
 ):
     """
     List user's notes
-    
+
     - Returns notes owned by current user
     - Supports filtering by pinned status and tags
     - Paginated results
     """
     query = db.query(Note).filter(Note.user_id == current_user.id)
-    
+
     if pinned_only:
         query = query.filter(Note.is_pinned == True)
-    
+
     if tags:
         tag_list = [t.strip().lower() for t in tags.split(',')]
         for tag in tag_list:
             query = query.filter(Note.tags.contains([tag]))
-    
+
+    # Get total count for pagination
+    total = query.count()
+
+    # Calculate offset from page
+    offset = (page - 1) * limit
+
+    # Order by newest first (descending), with pinned notes at top
     notes = query.order_by(
         Note.is_pinned.desc(),
         Note.updated_at.desc()
-    ).offset(skip).limit(limit).all()
-    
-    result = []
+    ).offset(offset).limit(limit).all()
+
+    items = []
     for note in notes:
         content_preview = note.content[:200] + "..." if len(note.content) > 200 else note.content
         word_count = len(note.content.split())
-        
-        result.append(NoteListResponse(
-            id=note.id,
-            user_id=note.user_id,
-            title=note.title,
-            is_pinned=note.is_pinned,
-            is_included_in_rag=note.is_included_in_rag,
-            tags=note.tags or [],
-            created_at=note.created_at,
-            updated_at=note.updated_at,
-            content_preview=content_preview,
-            word_count=word_count
-        ))
-    
-    return result
+
+        items.append({
+            "id": note.id,
+            "user_id": note.user_id,
+            "section": note.section,  # Section for grouping
+            "title": note.title,
+            "content": note.content,  # Include full content for notebook display
+            "is_pinned": note.is_pinned,
+            "is_included_in_rag": note.is_included_in_rag,
+            "tags": note.tags or [],
+            "created_at": note.created_at,
+            "updated_at": note.updated_at,
+            "content_preview": content_preview,
+            "word_count": word_count
+        })
+
+    # Calculate total pages
+    pages = (total + limit - 1) // limit if total > 0 else 1
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages
+    }
 
 
 @router.post("/", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
@@ -95,6 +114,7 @@ async def create_note(
     try:
         note = await note_service.create_note(
             user_id=current_user.id,
+            section=note_data.section,
             title=note_data.title,
             content=note_data.content,
             db=db,
@@ -291,6 +311,26 @@ async def search_notes(
         )
 
 
+@router.get("/sections/list", response_model=List[str])
+async def get_sections(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get distinct sections for user's notes
+
+    - Returns list of unique section names
+    - Excludes null/empty sections
+    """
+    sections = db.query(Note.section).filter(
+        Note.user_id == current_user.id,
+        Note.section.isnot(None),
+        Note.section != ''
+    ).distinct().order_by(Note.section.asc()).all()
+
+    return [s[0] for s in sections]
+
+
 @router.get("/pinned/list", response_model=List[NoteListResponse])
 async def get_pinned_notes(
     db: Session = Depends(get_db),
@@ -298,7 +338,7 @@ async def get_pinned_notes(
 ):
     """
     Get pinned notes
-    
+
     - Returns all pinned notes
     - Sorted by update date
     """

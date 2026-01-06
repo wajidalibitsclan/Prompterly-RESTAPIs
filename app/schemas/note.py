@@ -8,12 +8,13 @@ from datetime import datetime
 
 class NoteCreate(BaseModel):
     """Schema for creating note"""
+    section: Optional[str] = Field(None, max_length=255)  # Section/category for grouping
     title: str = Field(..., min_length=1, max_length=255)
     content: str = Field(..., min_length=1, max_length=50000)
     is_pinned: bool = False
     is_included_in_rag: bool = True
     tags: List[str] = []
-    
+
     @validator('tags')
     def validate_tags(cls, v):
         if len(v) > 20:
@@ -23,6 +24,7 @@ class NoteCreate(BaseModel):
 
 class NoteUpdate(BaseModel):
     """Schema for updating note"""
+    section: Optional[str] = Field(None, max_length=255)
     title: Optional[str] = Field(None, min_length=1, max_length=255)
     content: Optional[str] = Field(None, min_length=1, max_length=50000)
     is_pinned: Optional[bool] = None
@@ -34,6 +36,7 @@ class NoteResponse(BaseModel):
     """Schema for note response"""
     id: int
     user_id: int
+    section: Optional[str] = None
     title: str
     content: str
     is_pinned: bool
@@ -41,10 +44,10 @@ class NoteResponse(BaseModel):
     tags: List[str]
     created_at: datetime
     updated_at: datetime
-    
+
     # Computed fields
     word_count: int = 0
-    
+
     class Config:
         from_attributes = True
 
@@ -53,17 +56,18 @@ class NoteListResponse(BaseModel):
     """Schema for note list item"""
     id: int
     user_id: int
+    section: Optional[str] = None
     title: str
     is_pinned: bool
     is_included_in_rag: bool
     tags: List[str]
     created_at: datetime
     updated_at: datetime
-    
+
     # Preview
     content_preview: str = ""
     word_count: int = 0
-    
+
     class Config:
         from_attributes = True
 

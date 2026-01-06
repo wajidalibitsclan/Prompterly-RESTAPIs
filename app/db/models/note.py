@@ -13,11 +13,12 @@ from app.db.session import Base
 
 class Note(Base):
     """Note model - user notes that can be used for RAG"""
-    
+
     __tablename__ = "notes"
-    
+
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    section = Column(String(255), nullable=True)  # Section/category for grouping notes
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
     is_pinned = Column(Boolean, default=False, nullable=False)

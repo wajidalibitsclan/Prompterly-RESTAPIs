@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from datetime import datetime, timedelta
 import logging
+import asyncio
 
 from app.db.models.note import Note, TimeCapsule, CapsuleStatus
 from app.services.ai_service import ai_service
@@ -27,27 +28,30 @@ class NoteService:
         title: str,
         content: str,
         db: Session,
+        section: Optional[str] = None,
         is_pinned: bool = False,
         is_included_in_rag: bool = True,
         tags: List[str] = None
     ) -> Note:
         """
         Create new note
-        
+
         Args:
             user_id: User ID
             title: Note title
             content: Note content
             db: Database session
+            section: Section/category for grouping
             is_pinned: Pin note
             is_included_in_rag: Include in RAG
             tags: List of tags
-            
+
         Returns:
             Note instance
         """
         note = Note(
             user_id=user_id,
+            section=section,
             title=title,
             content=content,
             is_pinned=is_pinned,
@@ -58,24 +62,29 @@ class NoteService:
         db.add(note)
         db.commit()
         db.refresh(note)
-        
-        # Generate embedding for RAG if enabled
+
+        # Generate embedding for RAG in background (non-blocking)
         if is_included_in_rag:
-            try:
-                embedding_text = f"{title}\n\n{content}"
-                embedding = await self.ai_service.create_embedding(embedding_text)
-                # Store embedding (in production, use vector DB like Pinecone)
-                logger.info(f"Generated embedding for note {note.id}")
-            except Exception as e:
-                logger.error(f"Error generating embedding: {str(e)}")
-        
+            asyncio.create_task(self._generate_note_embedding(note.id, title, content))
+
         return note
+
+    async def _generate_note_embedding(self, note_id: int, title: str, content: str):
+        """Generate embedding for note in background (fire and forget)"""
+        try:
+            embedding_text = f"{title}\n\n{content}"
+            embedding = await self.ai_service.create_embedding(embedding_text)
+            # Store embedding (in production, use vector DB like Pinecone)
+            logger.info(f"Generated embedding for note {note_id}")
+        except Exception as e:
+            logger.error(f"Error generating embedding for note {note_id}: {str(e)}")
     
     async def update_note(
         self,
         note_id: int,
         user_id: int,
         db: Session,
+        section: Optional[str] = None,
         title: Optional[str] = None,
         content: Optional[str] = None,
         is_pinned: Optional[bool] = None,
@@ -84,20 +93,21 @@ class NoteService:
     ) -> Note:
         """
         Update note
-        
+
         Args:
             note_id: Note ID
             user_id: User ID
             db: Database session
+            section: New section
             title: New title
             content: New content
             is_pinned: Pin status
             is_included_in_rag: RAG status
             tags: New tags
-            
+
         Returns:
             Updated Note instance
-            
+
         Raises:
             ValueError: If note not found or unauthorized
         """
@@ -105,39 +115,37 @@ class NoteService:
             Note.id == note_id,
             Note.user_id == user_id
         ).first()
-        
+
         if not note:
             raise ValueError("Note not found or access denied")
-        
+
+        if section is not None:
+            note.section = section
+
         if title is not None:
             note.title = title
-        
+
         if content is not None:
             note.content = content
-        
+
         if is_pinned is not None:
             note.is_pinned = is_pinned
-        
+
         if is_included_in_rag is not None:
             note.is_included_in_rag = is_included_in_rag
-        
+
         if tags is not None:
             note.tags = tags
         
         note.updated_at = datetime.utcnow()
-        
+
         db.commit()
         db.refresh(note)
-        
-        # Regenerate embedding if RAG enabled and content changed
+
+        # Regenerate embedding in background if RAG enabled and content changed
         if content is not None and note.is_included_in_rag:
-            try:
-                embedding_text = f"{note.title}\n\n{note.content}"
-                embedding = await self.ai_service.create_embedding(embedding_text)
-                logger.info(f"Regenerated embedding for note {note.id}")
-            except Exception as e:
-                logger.error(f"Error regenerating embedding: {str(e)}")
-        
+            asyncio.create_task(self._generate_note_embedding(note.id, note.title, note.content))
+
         return note
     
     async def search_notes(
