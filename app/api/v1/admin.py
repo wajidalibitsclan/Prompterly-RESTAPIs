@@ -2,7 +2,7 @@
 Admin API endpoints
 Handles admin dashboard, user management, and analytics
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import List, Optional
@@ -40,6 +40,7 @@ from app.schemas.admin import (
 from app.core.security import hash_password
 from app.services.file_service import file_service
 from app.services.billing_service import billing_service
+from app.services.email_service import send_user_credentials_email_sync, send_mentor_welcome_email_sync
 from app.services.lounge_resource_service import lounge_resource_service
 from app.schemas.lounge_resource import (
     LoungeResourceResponse,
@@ -947,11 +948,15 @@ async def admin_delete_lounge(
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_data: CreateUserRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
     """
     Create a new user (admin only)
+
+    - Creates user account
+    - Sends credentials email to user
     """
 
     # Check if email already exists
@@ -983,6 +988,15 @@ async def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Send credentials email to user in background (only for non-mentor roles)
+    if role != UserRole.MENTOR:
+        background_tasks.add_task(
+            send_user_credentials_email_sync,
+            user.email,
+            user.name,
+            user_data.password  # Send the original password before hashing
+        )
 
     return {
         "id": user.id,
@@ -1233,11 +1247,15 @@ async def get_mentor(
 @router.post("/mentors", status_code=status.HTTP_201_CREATED)
 async def create_mentor(
     mentor_data: CreateMentorRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
     """
     Create a mentor profile (admin only)
+
+    - Creates mentor profile for existing user
+    - Sends mentor welcome email (no credentials since there's no mentor portal)
     """
     from app.db.models.mentor import MentorStatus
 
@@ -1282,6 +1300,13 @@ async def create_mentor(
     db.add(mentor)
     db.commit()
     db.refresh(mentor)
+
+    # Send mentor welcome email in background
+    background_tasks.add_task(
+        send_mentor_welcome_email_sync,
+        user.email,
+        user.name
+    )
 
     return {
         "id": mentor.id,

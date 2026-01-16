@@ -1,6 +1,9 @@
 """
 Email service for sending transactional emails
 Uses SMTP configuration from settings
+
+All email sending functions have sync versions for use with FastAPI BackgroundTasks
+to prevent blocking the main application thread.
 """
 import smtplib
 from email.mime.text import MIMEText
@@ -9,6 +12,20 @@ from typing import List, Optional
 import logging
 
 from app.core.config import settings
+from app.services.email_templates import (
+    get_otp_email_template,
+    get_welcome_email_template,
+    get_password_reset_otp_template,
+    get_user_credentials_email_template,
+    get_mentor_welcome_email_template,
+    get_contact_confirmation_email_template,
+    get_contact_admin_notification_template,
+    get_subscription_confirmation_email_template,
+    get_subscription_expiry_warning_email_template,
+    get_subscription_upgrade_email_template,
+    get_subscription_cancellation_email_template,
+    get_payment_method_update_email_template,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,71 +268,42 @@ AI Coaching Team
     )
 
 
-async def send_welcome_email(email: str, name: str) -> bool:
+def send_welcome_email_sync(email: str, name: str) -> bool:
     """
-    Send welcome email after email verification
-    
+    Send welcome email after successful registration (synchronous for background tasks)
+
     Args:
         email: User email
         name: User name
-        
+
     Returns:
         True if sent successfully
     """
-    dashboard_url = f"{settings.CORS_ORIGINS[0]}/dashboard"
-    
-    body = f"""
-Hi {name},
+    # Determine the correct dashboard URL based on environment
+    dashboard_url = f"{settings.CORS_ORIGINS[0]}/dashboard" if settings.CORS_ORIGINS else "https://prompterly.ai/dashboard"
 
-Welcome to AI Coaching Platform!
+    body, html = get_welcome_email_template(name, dashboard_url)
 
-Your email has been verified and your account is now active.
-
-Get started by:
-1. Exploring available lounges
-2. Joining a mentor's coaching session
-3. Starting a conversation with your AI coach
-
-Visit your dashboard: {dashboard_url}
-
-Best regards,
-AI Coaching Team
-    """
-    
-    html = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <h2>Welcome to AI Coaching Platform! 🎉</h2>
-    <p>Hi {name},</p>
-    <p>Your email has been verified and your account is now active.</p>
-    <h3>Get Started:</h3>
-    <ul style="line-height: 2;">
-        <li>Explore available coaching lounges</li>
-        <li>Join a mentor's coaching session</li>
-        <li>Start a conversation with your AI coach</li>
-    </ul>
-    <p style="text-align: center; margin: 30px 0;">
-        <a href="{dashboard_url}" 
-           style="background-color: #10B981; color: white; padding: 12px 30px; 
-                  text-decoration: none; border-radius: 5px; display: inline-block;">
-            Go to Dashboard
-        </a>
-    </p>
-    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-    <p style="color: #999; font-size: 12px;">
-        AI Coaching Platform<br>
-        © 2025 All rights reserved
-    </p>
-</body>
-</html>
-    """
-    
-    return await send_email(
+    return send_email_sync(
         to=email,
-        subject="Welcome to AI Coaching Platform! 🎉",
+        subject="Welcome to Prompterly! Your account is ready",
         body=body,
         html=html
     )
+
+
+async def send_welcome_email(email: str, name: str) -> bool:
+    """
+    Send welcome email after successful registration (async wrapper)
+
+    Args:
+        email: User email
+        name: User name
+
+    Returns:
+        True if sent successfully
+    """
+    return send_welcome_email_sync(email, name)
 
 
 def send_otp_email_sync(email: str, name: str, otp: str) -> bool:
@@ -330,48 +318,7 @@ def send_otp_email_sync(email: str, name: str, otp: str) -> bool:
     Returns:
         True if sent successfully
     """
-    body = f"""
-Hi {name},
-
-Your verification code for Prompterly is:
-
-{otp}
-
-This code will expire in 10 minutes.
-
-If you didn't request this code, please ignore this email.
-
-Best regards,
-Prompterly Team
-    """
-
-    html = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <h2>Email Verification</h2>
-    <p>Hi {name},</p>
-    <p>Your verification code for Prompterly is:</p>
-    <div style="text-align: center; margin: 30px 0;">
-        <span style="background-color: #f3f4f6; padding: 15px 30px; font-size: 32px;
-                     font-weight: bold; letter-spacing: 8px; border-radius: 8px;
-                     display: inline-block; color: #1f2937;">
-            {otp}
-        </span>
-    </div>
-    <p style="color: #666; font-size: 14px;">
-        This code will expire in <strong>10 minutes</strong>.
-    </p>
-    <p style="color: #666; font-size: 12px; margin-top: 30px;">
-        If you didn't request this code, please ignore this email.
-    </p>
-    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-    <p style="color: #999; font-size: 12px;">
-        Prompterly<br>
-        © 2025 All rights reserved
-    </p>
-</body>
-</html>
-    """
+    body, html = get_otp_email_template(name, otp)
 
     return send_email_sync(
         to=email,
@@ -400,55 +347,11 @@ def send_password_reset_otp_sync(email: str, name: str, otp: str) -> bool:
     Returns:
         True if sent successfully
     """
-    body = f"""
-Hi {name},
-
-You requested to reset your password for Prompterly.
-
-Your verification code is:
-
-{otp}
-
-This code will expire in 10 minutes.
-
-If you didn't request this, please ignore this email and your password will remain unchanged.
-
-Best regards,
-Prompterly Team
-    """
-
-    html = f"""
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <h2>Password Reset Request</h2>
-    <p>Hi {name},</p>
-    <p>You requested to reset your password for Prompterly.</p>
-    <p>Your verification code is:</p>
-    <div style="text-align: center; margin: 30px 0;">
-        <span style="background-color: #f3f4f6; padding: 15px 30px; font-size: 32px;
-                     font-weight: bold; letter-spacing: 8px; border-radius: 8px;
-                     display: inline-block; color: #1f2937;">
-            {otp}
-        </span>
-    </div>
-    <p style="color: #666; font-size: 14px;">
-        This code will expire in <strong>10 minutes</strong>.
-    </p>
-    <p style="color: #666; font-size: 12px; margin-top: 30px;">
-        If you didn't request this, please ignore this email and your password will remain unchanged.
-    </p>
-    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-    <p style="color: #999; font-size: 12px;">
-        Prompterly<br>
-        © 2025 All rights reserved
-    </p>
-</body>
-</html>
-    """
+    body, html = get_password_reset_otp_template(name, otp)
 
     return send_email_sync(
         to=email,
-        subject=f"Password Reset Code: {otp}",
+        subject=f"Prompterly Password Reset Code: {otp}",
         body=body,
         html=html
     )
@@ -497,4 +400,290 @@ async def send_notification_email(
         to=email,
         subject=template["subject"],
         body=template["body"]
+    )
+
+
+def send_user_credentials_email_sync(email: str, name: str, password: str) -> bool:
+    """
+    Send credentials email to user created by admin (synchronous for background tasks)
+
+    Args:
+        email: User's email (also login username)
+        name: User's name
+        password: Temporary password
+
+    Returns:
+        True if sent successfully
+    """
+    # Determine login URL from CORS origins
+    login_url = f"{settings.CORS_ORIGINS[0]}/login" if settings.CORS_ORIGINS else "https://prompterly.ai/login"
+
+    body, html = get_user_credentials_email_template(name, email, password, login_url)
+
+    return send_email_sync(
+        to=email,
+        subject="Welcome to Prompterly - Your Account Credentials",
+        body=body,
+        html=html
+    )
+
+
+def send_mentor_welcome_email_sync(email: str, name: str) -> bool:
+    """
+    Send welcome email to mentor created by admin (synchronous for background tasks)
+    No credentials since there's no mentor portal
+
+    Args:
+        email: Mentor's email
+        name: Mentor's name
+
+    Returns:
+        True if sent successfully
+    """
+    # Determine Prompterly URL from CORS origins
+    prompterly_url = settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "https://prompterly.ai"
+
+    body, html = get_mentor_welcome_email_template(name, prompterly_url)
+
+    return send_email_sync(
+        to=email,
+        subject="Welcome to Prompterly - You're Now a Mentor!",
+        body=body,
+        html=html
+    )
+
+
+def send_contact_confirmation_email_sync(email: str, name: str, subject: str) -> bool:
+    """
+    Send contact form confirmation email to user (synchronous for background tasks)
+
+    Args:
+        email: User's email
+        name: User's name
+        subject: Subject of their inquiry
+
+    Returns:
+        True if sent successfully
+    """
+    body, html = get_contact_confirmation_email_template(name, subject)
+
+    return send_email_sync(
+        to=email,
+        subject="Thank you for contacting Prompterly",
+        body=body,
+        html=html
+    )
+
+
+def send_contact_admin_notification_sync(
+    admin_email: str,
+    name: str,
+    email: str,
+    subject: str,
+    message: str,
+    ip_address: str,
+    submitted_at: str,
+    message_id: int
+) -> bool:
+    """
+    Send contact form notification to admin (synchronous for background tasks)
+
+    Args:
+        admin_email: Admin email to receive notification
+        name: Sender's name
+        email: Sender's email
+        subject: Message subject
+        message: Message content
+        ip_address: Sender's IP
+        submitted_at: Submission timestamp
+        message_id: Database message ID
+
+    Returns:
+        True if sent successfully
+    """
+    body, html = get_contact_admin_notification_template(
+        name, email, subject, message, ip_address, submitted_at, message_id
+    )
+
+    return send_email_sync(
+        to=admin_email,
+        subject=f"[Prompterly Contact] {subject}",
+        body=body,
+        html=html
+    )
+
+
+def send_subscription_confirmation_email_sync(
+    email: str,
+    name: str,
+    lounge_name: str,
+    mentor_name: str,
+    plan_type: str,
+    price: str,
+    next_billing_date: str
+) -> bool:
+    """
+    Send subscription confirmation email (synchronous for background tasks)
+
+    Args:
+        email: User's email
+        name: User's name
+        lounge_name: Name of the subscribed lounge
+        mentor_name: Name of the lounge mentor
+        plan_type: Subscription plan type (monthly/yearly)
+        price: Subscription price
+        next_billing_date: Next billing date
+
+    Returns:
+        True if sent successfully
+    """
+    dashboard_url = f"{settings.CORS_ORIGINS[0]}/dashboard" if settings.CORS_ORIGINS else "https://prompterly.ai/dashboard"
+
+    body, html = get_subscription_confirmation_email_template(
+        name, lounge_name, mentor_name, plan_type, price, next_billing_date, dashboard_url
+    )
+
+    return send_email_sync(
+        to=email,
+        subject=f"Welcome to {lounge_name} - Subscription Confirmed!",
+        body=body,
+        html=html
+    )
+
+
+def send_subscription_expiry_warning_email_sync(
+    email: str,
+    name: str,
+    lounge_name: str,
+    expiry_date: str,
+    days_remaining: int
+) -> bool:
+    """
+    Send subscription expiry warning email (synchronous for background tasks)
+
+    Args:
+        email: User's email
+        name: User's name
+        lounge_name: Name of the lounge
+        expiry_date: Subscription expiry date
+        days_remaining: Days until expiry
+
+    Returns:
+        True if sent successfully
+    """
+    renewal_url = f"{settings.CORS_ORIGINS[0]}/lounges" if settings.CORS_ORIGINS else "https://prompterly.ai/lounges"
+
+    body, html = get_subscription_expiry_warning_email_template(
+        name, lounge_name, expiry_date, days_remaining, renewal_url
+    )
+
+    return send_email_sync(
+        to=email,
+        subject=f"Your {lounge_name} subscription expires in {days_remaining} days",
+        body=body,
+        html=html
+    )
+
+
+def send_subscription_upgrade_email_sync(
+    email: str,
+    name: str,
+    lounge_name: str,
+    old_plan: str,
+    new_plan: str,
+    new_price: str,
+    savings: str,
+    next_billing_date: str
+) -> bool:
+    """
+    Send subscription upgrade confirmation email (synchronous for background tasks)
+
+    Args:
+        email: User's email
+        name: User's name
+        lounge_name: Name of the lounge
+        old_plan: Previous plan type
+        new_plan: New plan type
+        new_price: New subscription price
+        savings: Amount saved by upgrading
+        next_billing_date: Next billing date
+
+    Returns:
+        True if sent successfully
+    """
+    dashboard_url = f"{settings.CORS_ORIGINS[0]}/dashboard" if settings.CORS_ORIGINS else "https://prompterly.ai/dashboard"
+
+    body, html = get_subscription_upgrade_email_template(
+        name, lounge_name, old_plan, new_plan, new_price, savings, next_billing_date, dashboard_url
+    )
+
+    return send_email_sync(
+        to=email,
+        subject=f"Subscription Upgraded - You're saving {savings}!",
+        body=body,
+        html=html
+    )
+
+
+def send_subscription_cancellation_email_sync(
+    email: str,
+    name: str,
+    lounge_name: str,
+    access_end_date: str,
+    feedback_url: Optional[str] = None
+) -> bool:
+    """
+    Send subscription cancellation confirmation email (synchronous for background tasks)
+
+    Args:
+        email: User's email
+        name: User's name
+        lounge_name: Name of the lounge
+        access_end_date: Date when access ends
+        feedback_url: Optional URL for feedback form
+
+    Returns:
+        True if sent successfully
+    """
+    body, html = get_subscription_cancellation_email_template(
+        name, lounge_name, access_end_date, feedback_url
+    )
+
+    return send_email_sync(
+        to=email,
+        subject=f"Your {lounge_name} subscription has been cancelled",
+        body=body,
+        html=html
+    )
+
+
+def send_payment_method_update_email_sync(
+    email: str,
+    name: str,
+    card_last_four: str,
+    card_brand: str,
+    updated_at: str
+) -> bool:
+    """
+    Send payment method update confirmation email (synchronous for background tasks)
+
+    Args:
+        email: User's email
+        name: User's name
+        card_last_four: Last 4 digits of the card
+        card_brand: Card brand (Visa, Mastercard, etc.)
+        updated_at: Timestamp of the update
+
+    Returns:
+        True if sent successfully
+    """
+    body, html = get_payment_method_update_email_template(
+        name, card_last_four, card_brand, updated_at
+    )
+
+    return send_email_sync(
+        to=email,
+        subject="Payment Method Updated - Prompterly",
+        body=body,
+        html=html
     )

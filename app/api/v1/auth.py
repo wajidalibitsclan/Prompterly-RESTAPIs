@@ -38,7 +38,7 @@ from app.core.logging import get_logger, log_auth_event
 from app.core.jwt import get_current_user
 from app.db.models.user import User, UserRole
 from app.db.models.auth import UserSession, OAuthAccount, OAuthProvider, EmailOTP
-from app.services.email_service import send_otp_email_sync, send_password_reset_otp_sync
+from app.services.email_service import send_otp_email_sync, send_password_reset_otp_sync, send_welcome_email_sync
 from app.schemas.auth import (
     UserRegister,
     Token,
@@ -140,6 +140,7 @@ async def send_registration_otp(
 async def verify_registration_otp(
     otp_data: OTPVerification,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -147,6 +148,7 @@ async def verify_registration_otp(
 
     - Validates OTP
     - Creates user account
+    - Sends welcome email
     - Returns user data
     """
     client_ip = get_client_ip(request)
@@ -193,6 +195,10 @@ async def verify_registration_otp(
 
         log_auth_event(logger, "REGISTER", new_user.email, True, client_ip)
         logger.info(f"User registered successfully via OTP: {new_user.email} (ID: {new_user.id})")
+
+        # Send welcome email in background
+        background_tasks.add_task(send_welcome_email_sync, new_user.email, new_user.name)
+        logger.info(f"Welcome email queued for: {new_user.email}")
 
         return new_user
 

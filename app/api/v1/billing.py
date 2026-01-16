@@ -2,7 +2,7 @@
 Billing API endpoints
 Handles subscriptions, payments, and Stripe webhooks
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -14,6 +14,12 @@ from app.core.jwt import get_current_active_user
 from app.core.config import settings
 from app.db.models.user import User
 from app.db.models.billing import SubscriptionPlan, Subscription, Payment, LoungeSubscription, SubscriptionStatus
+from app.services.email_service import (
+    send_subscription_confirmation_email_sync,
+    send_subscription_cancellation_email_sync,
+    send_subscription_upgrade_email_sync,
+    send_payment_method_update_email_sync,
+)
 from app.schemas.billing import (
     SubscriptionPlanResponse,
     CheckoutSessionCreate,
@@ -513,6 +519,7 @@ async def get_lounge_subscriptions(
 async def cancel_lounge_subscription(
     lounge_id: int,
     cancel_data: CancelLoungeSubscriptionRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -531,6 +538,16 @@ async def cancel_lounge_subscription(
         )
 
         lounge = subscription.lounge
+
+        # Send cancellation confirmation email
+        access_end_date = subscription.renews_at.strftime("%B %d, %Y") if subscription.renews_at else "immediately"
+        background_tasks.add_task(
+            send_subscription_cancellation_email_sync,
+            current_user.email,
+            current_user.name,
+            lounge.title,
+            access_end_date
+        )
 
         return LoungeSubscriptionResponse(
             id=subscription.id,
@@ -564,6 +581,7 @@ async def cancel_lounge_subscription(
 async def upgrade_lounge_subscription(
     lounge_id: int,
     upgrade_data: UpgradeLoungeSubscriptionRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -589,6 +607,21 @@ async def upgrade_lounge_subscription(
         if subscription.renews_at:
             delta = subscription.renews_at - datetime.utcnow()
             days_until = max(0, delta.days)
+
+        # Send upgrade confirmation email
+        # Monthly is $25/month, Yearly is $240/year (saving $60)
+        next_billing_date = subscription.renews_at.strftime("%B %d, %Y") if subscription.renews_at else "N/A"
+        background_tasks.add_task(
+            send_subscription_upgrade_email_sync,
+            current_user.email,
+            current_user.name,
+            lounge.title,
+            "Monthly",
+            "Yearly",
+            "$240/year",
+            "$60/year",
+            next_billing_date
+        )
 
         return LoungeSubscriptionResponse(
             id=subscription.id,
@@ -756,6 +789,42 @@ async def stripe_webhook(
                 try:
                     await billing_service.handle_lounge_checkout_completed(event_data, db)
                     logger.info("Lounge checkout completed successfully - subscription and membership created")
+
+                    # Send subscription confirmation email
+                    try:
+                        from app.db.models.lounge import Lounge
+                        user_id = int(metadata.get('user_id', 0))
+                        lounge_id = int(metadata.get('lounge_id', 0))
+                        plan_type_str = metadata.get('plan_type', 'monthly')
+
+                        user = db.query(User).filter(User.id == user_id).first()
+                        lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+                        if user and lounge:
+                            # Get mentor name
+                            mentor_name = "Your Mentor"
+                            if lounge.mentor:
+                                mentor_name = lounge.mentor.name
+
+                            # Calculate price and next billing date
+                            price = "$25/month" if plan_type_str == "monthly" else "$240/year"
+                            stripe_sub = stripe.Subscription.retrieve(event_data.get('subscription'))
+                            next_billing = datetime.fromtimestamp(stripe_sub['current_period_end']).strftime("%B %d, %Y")
+
+                            send_subscription_confirmation_email_sync(
+                                user.email,
+                                user.name,
+                                lounge.title,
+                                mentor_name,
+                                plan_type_str.capitalize(),
+                                price,
+                                next_billing
+                            )
+                            logger.info(f"Subscription confirmation email sent to {user.email}")
+                    except Exception as email_error:
+                        logger.error(f"Error sending subscription confirmation email: {str(email_error)}")
+                        # Don't raise - email failure shouldn't fail the webhook
+
                 except Exception as e:
                     logger.error(f"Error in handle_lounge_checkout_completed: {str(e)}")
                     import traceback
@@ -871,6 +940,32 @@ async def stripe_webhook(
 
         elif event_type == 'payment_intent.payment_failed':
             logger.warning(f"Payment failed: {event_data.get('id')}")
+
+        elif event_type in ['payment_method.attached', 'payment_method.updated', 'customer.source.updated']:
+            # Handle payment method updates
+            logger.info(f"Processing {event_type} event")
+            try:
+                customer_id = event_data.get('customer')
+                if customer_id:
+                    # Get user by Stripe customer ID
+                    user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+                    if user:
+                        # Get card details
+                        card_data = event_data.get('card', {})
+                        card_last_four = card_data.get('last4', '****')
+                        card_brand = card_data.get('brand', 'Card')
+                        updated_at = datetime.utcnow().strftime("%B %d, %Y at %H:%M UTC")
+
+                        send_payment_method_update_email_sync(
+                            user.email,
+                            user.name,
+                            card_last_four,
+                            card_brand.capitalize() if card_brand else 'Card',
+                            updated_at
+                        )
+                        logger.info(f"Payment method update email sent to {user.email}")
+            except Exception as email_error:
+                logger.error(f"Error sending payment method update email: {str(email_error)}")
 
         else:
             logger.info(f"Unhandled event type: {event_type}")
