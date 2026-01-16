@@ -71,7 +71,17 @@ class Lounge(Base):
         back_populates="lounge",
         cascade="all, delete-orphan"
     )
-    
+    notes = relationship(
+        "Note",
+        back_populates="lounge",
+        cascade="all, delete-orphan"
+    )
+    resources = relationship(
+        "LoungeResource",
+        back_populates="lounge",
+        cascade="all, delete-orphan"
+    )
+
     @property
     def member_count(self) -> int:
         """Get count of active members"""

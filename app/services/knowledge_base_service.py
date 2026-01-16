@@ -758,6 +758,7 @@ class KnowledgeBaseService:
             query = query.filter(KBPrompt.lounge_id.is_(None))
 
         prompts = query.all()
+        logger.info(f"_search_prompts: lounge_id={lounge_id}, include_global={include_global}, found {len(prompts)} prompts")
 
         # Calculate similarities
         candidates = [(p.id, p.embedding) for p in prompts if p.embedding]
@@ -890,6 +891,8 @@ class KnowledgeBaseService:
         similarity_threshold: float = 0.7
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """Get RAG context for AI chat"""
+        logger.info(f"KB get_rag_context called - lounge_id={lounge_id}, include_global={include_global}")
+
         results = await self.semantic_search(
             db=db,
             query=query,
@@ -898,6 +901,8 @@ class KnowledgeBaseService:
             include_global=include_global,
             limit=max_items
         )
+
+        logger.info(f"KB semantic_search returned {len(results)} results for lounge_id={lounge_id}")
 
         # Build context string
         context_parts = []

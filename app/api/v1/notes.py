@@ -34,6 +34,7 @@ async def list_notes(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     page: int = Query(1, ge=1),
+    lounge_id: Optional[int] = Query(None, description="Filter by lounge ID"),
     pinned_only: bool = False,
     tags: Optional[str] = None  # Comma-separated tags
 ):
@@ -41,10 +42,14 @@ async def list_notes(
     List user's notes
 
     - Returns notes owned by current user
-    - Supports filtering by pinned status and tags
+    - Supports filtering by lounge, pinned status and tags
     - Paginated results
     """
     query = db.query(Note).filter(Note.user_id == current_user.id)
+
+    # Filter by lounge_id if provided
+    if lounge_id is not None:
+        query = query.filter(Note.lounge_id == lounge_id)
 
     if pinned_only:
         query = query.filter(Note.is_pinned == True)
@@ -74,6 +79,7 @@ async def list_notes(
         items.append({
             "id": note.id,
             "user_id": note.user_id,
+            "lounge_id": note.lounge_id,
             "section": note.section,  # Section for grouping
             "title": note.title,
             "content": note.content,  # Include full content for notebook display
@@ -114,6 +120,7 @@ async def create_note(
     try:
         note = await note_service.create_note(
             user_id=current_user.id,
+            lounge_id=note_data.lounge_id,
             section=note_data.section,
             title=note_data.title,
             content=note_data.content,
@@ -122,12 +129,13 @@ async def create_note(
             is_included_in_rag=note_data.is_included_in_rag,
             tags=note_data.tags
         )
-        
+
         word_count = len(note.content.split())
-        
+
         return NoteResponse(
             id=note.id,
             user_id=note.user_id,
+            lounge_id=note.lounge_id,
             title=note.title,
             content=note.content,
             is_pinned=note.is_pinned,
@@ -169,10 +177,11 @@ async def get_note(
         )
     
     word_count = len(note.content.split())
-    
+
     return NoteResponse(
         id=note.id,
         user_id=note.user_id,
+        lounge_id=note.lounge_id,
         title=note.title,
         content=note.content,
         is_pinned=note.is_pinned,
@@ -210,10 +219,11 @@ async def update_note(
         )
         
         word_count = len(note.content.split())
-        
+
         return NoteResponse(
             id=note.id,
             user_id=note.user_id,
+            lounge_id=note.lounge_id,
             title=note.title,
             content=note.content,
             is_pinned=note.is_pinned,
@@ -223,7 +233,7 @@ async def update_note(
             updated_at=note.updated_at,
             word_count=word_count
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -314,19 +324,26 @@ async def search_notes(
 @router.get("/sections/list", response_model=List[str])
 async def get_sections(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    lounge_id: Optional[int] = Query(None, description="Filter by lounge ID")
 ):
     """
     Get distinct sections for user's notes
 
     - Returns list of unique section names
     - Excludes null/empty sections
+    - Optionally filter by lounge
     """
-    sections = db.query(Note.section).filter(
+    query = db.query(Note.section).filter(
         Note.user_id == current_user.id,
         Note.section.isnot(None),
         Note.section != ''
-    ).distinct().order_by(Note.section.asc()).all()
+    )
+
+    if lounge_id is not None:
+        query = query.filter(Note.lounge_id == lounge_id)
+
+    sections = query.distinct().order_by(Note.section.asc()).all()
 
     return [s[0] for s in sections]
 
@@ -563,7 +580,7 @@ async def delete_capsule(
 ):
     """
     Delete time capsule
-    
+
     - Permanently deletes capsule
     - Works for both locked and unlocked
     """
@@ -574,9 +591,49 @@ async def delete_capsule(
             db=db
         )
         return None
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+
+@router.post("/capsules/{capsule_id}/unlock", response_model=TimeCapsuleResponse)
+async def unlock_capsule(
+    capsule_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Manually unlock a time capsule
+
+    - Only works if unlock time has passed
+    - Changes status from locked to unlocked
+    """
+    try:
+        capsule = await note_service.unlock_single_capsule(
+            capsule_id=capsule_id,
+            user_id=current_user.id,
+            db=db
+        )
+
+        return TimeCapsuleResponse(
+            id=capsule.id,
+            user_id=capsule.user_id,
+            title=capsule.title,
+            content=capsule.content,
+            unlock_at=capsule.unlock_at,
+            status=capsule.status.value,
+            created_at=capsule.created_at,
+            updated_at=capsule.updated_at,
+            is_unlocked=True,
+            days_until_unlock=None,
+            can_view_content=True
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )

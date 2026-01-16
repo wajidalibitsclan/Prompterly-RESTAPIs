@@ -3,11 +3,12 @@ Pydantic schemas for notes and time capsules
 """
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class NoteCreate(BaseModel):
     """Schema for creating note"""
+    lounge_id: Optional[int] = None  # Optional lounge association
     section: Optional[str] = Field(None, max_length=255)  # Section/category for grouping
     title: str = Field(..., min_length=1, max_length=255)
     content: str = Field(..., min_length=1, max_length=50000)
@@ -36,6 +37,7 @@ class NoteResponse(BaseModel):
     """Schema for note response"""
     id: int
     user_id: int
+    lounge_id: Optional[int] = None
     section: Optional[str] = None
     title: str
     content: str
@@ -56,6 +58,7 @@ class NoteListResponse(BaseModel):
     """Schema for note list item"""
     id: int
     user_id: int
+    lounge_id: Optional[int] = None
     section: Optional[str] = None
     title: str
     is_pinned: bool
@@ -80,7 +83,12 @@ class TimeCapsuleCreate(BaseModel):
     
     @validator('unlock_at')
     def validate_unlock_date(cls, v):
-        if v <= datetime.utcnow():
+        # Make comparison timezone-aware
+        now = datetime.now(timezone.utc)
+        # If v is naive, assume UTC
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        if v <= now:
             raise ValueError('Unlock date must be in the future')
         return v
 

@@ -5,7 +5,7 @@ Includes search and RAG integration
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
 
@@ -28,6 +28,7 @@ class NoteService:
         title: str,
         content: str,
         db: Session,
+        lounge_id: Optional[int] = None,
         section: Optional[str] = None,
         is_pinned: bool = False,
         is_included_in_rag: bool = True,
@@ -41,6 +42,7 @@ class NoteService:
             title: Note title
             content: Note content
             db: Database session
+            lounge_id: Optional lounge association
             section: Section/category for grouping
             is_pinned: Pin note
             is_included_in_rag: Include in RAG
@@ -51,6 +53,7 @@ class NoteService:
         """
         note = Note(
             user_id=user_id,
+            lounge_id=lounge_id,
             section=section,
             title=title,
             content=content,
@@ -294,7 +297,12 @@ class NoteService:
         Returns:
             TimeCapsule instance
         """
-        if unlock_at <= datetime.utcnow():
+        # Make comparison timezone-aware
+        now = datetime.now(timezone.utc)
+        # If unlock_at is naive, assume UTC
+        if unlock_at.tzinfo is None:
+            unlock_at = unlock_at.replace(tzinfo=timezone.utc)
+        if unlock_at <= now:
             raise ValueError("Unlock date must be in the future")
         
         capsule = TimeCapsule(
@@ -328,27 +336,75 @@ class NoteService:
         Returns:
             List of newly unlocked capsules
         """
-        now = datetime.utcnow()
-        
+        now = datetime.now(timezone.utc)
+
         # Find locked capsules ready to unlock
         capsules = db.query(TimeCapsule).filter(
             TimeCapsule.status == CapsuleStatus.LOCKED,
             TimeCapsule.unlock_at <= now
         ).all()
-        
+
         unlocked = []
         for capsule in capsules:
             capsule.status = CapsuleStatus.UNLOCKED
-            capsule.updated_at = datetime.utcnow()
+            capsule.updated_at = datetime.now(timezone.utc)
             unlocked.append(capsule)
             
             logger.info(f"Unlocked capsule {capsule.id} for user {capsule.user_id}")
         
         if unlocked:
             db.commit()
-        
+
         return unlocked
-    
+
+    async def unlock_single_capsule(
+        self,
+        capsule_id: int,
+        user_id: int,
+        db: Session
+    ) -> TimeCapsule:
+        """
+        Manually unlock a single capsule if its unlock time has passed
+
+        Args:
+            capsule_id: Capsule ID
+            user_id: User ID
+            db: Database session
+
+        Returns:
+            Unlocked TimeCapsule instance
+
+        Raises:
+            ValueError: If capsule not found, unauthorized, already unlocked, or time not passed
+        """
+        capsule = db.query(TimeCapsule).filter(
+            TimeCapsule.id == capsule_id,
+            TimeCapsule.user_id == user_id
+        ).first()
+
+        if not capsule:
+            raise ValueError("Time capsule not found or access denied")
+
+        if capsule.status == CapsuleStatus.UNLOCKED:
+            raise ValueError("Capsule is already unlocked")
+
+        now = datetime.now(timezone.utc)
+        unlock_at = capsule.unlock_at
+        if unlock_at.tzinfo is None:
+            unlock_at = unlock_at.replace(tzinfo=timezone.utc)
+
+        if unlock_at > now:
+            raise ValueError("Cannot unlock capsule before its scheduled time")
+
+        capsule.status = CapsuleStatus.UNLOCKED
+        capsule.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(capsule)
+
+        logger.info(f"Manually unlocked capsule {capsule.id} for user {user_id}")
+
+        return capsule
+
     async def get_user_capsules(
         self,
         user_id: int,

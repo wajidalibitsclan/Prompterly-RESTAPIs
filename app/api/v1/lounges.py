@@ -34,6 +34,13 @@ from app.schemas.lounge import (
     UpdateMemberRole
 )
 from app.services.file_service import file_service
+from app.services.lounge_resource_service import lounge_resource_service
+from app.db.models.lounge_resource import LoungeResource
+from app.db.models.file import File as FileModel
+from app.schemas.lounge_resource import (
+    LoungeResourceListResponse,
+    LoungeResourcesListResponse
+)
 
 router = APIRouter()
 
@@ -840,3 +847,81 @@ async def delete_lounge_profile_image(
         db.commit()
 
     return None
+
+
+# =============================================================================
+# Lounge Resources (User Access)
+# =============================================================================
+
+@router.get("/{lounge_id}/resources", response_model=LoungeResourcesListResponse)
+async def get_lounge_resources(
+    lounge_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100)
+):
+    """
+    Get resources for a lounge (user access)
+
+    - Requires authenticated user
+    - User must be a member of the lounge
+    - Returns paginated list of resources
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    # Check if user is a member or the lounge mentor
+    is_mentor = (lounge.mentor.user_id == current_user.id)
+    is_member = db.query(LoungeMembership).filter(
+        LoungeMembership.lounge_id == lounge_id,
+        LoungeMembership.user_id == current_user.id,
+        LoungeMembership.left_at.is_(None)
+    ).first() is not None
+
+    if not (is_mentor or is_member):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must be a member of this lounge to access resources"
+        )
+
+    # Get resources for the lounge
+    resources, total = await lounge_resource_service.get_lounge_resources(
+        lounge_id=lounge_id,
+        db=db,
+        page=page,
+        page_size=page_size
+    )
+
+    # Build response with file info
+    items = []
+    for resource in resources:
+        file_url = await lounge_resource_service.get_resource_file_url(resource.id, db)
+        file_record = db.query(FileModel).filter(FileModel.id == resource.file_id).first()
+
+        items.append(LoungeResourceListResponse(
+            id=resource.id,
+            lounge_id=resource.lounge_id,
+            title=resource.title,
+            description=resource.description,
+            file_url=file_url,
+            file_type=file_record.mime_type if file_record else None,
+            file_size=file_record.size_bytes if file_record else 0,
+            file_name=file_record.storage_path.split('/')[-1] if file_record and file_record.storage_path else None,
+            created_at=resource.created_at
+        ))
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+
+    return LoungeResourcesListResponse(
+        resources=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
+    )

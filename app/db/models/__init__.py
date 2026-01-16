@@ -19,6 +19,7 @@ from app.db.models.chat import (
 )
 from app.db.models.file import File, MessageAttachment
 from app.db.models.note import Note, TimeCapsule, CapsuleStatus
+from app.db.models.lounge_resource import LoungeResource
 from app.db.models.billing import (
     SubscriptionPlan,
     Subscription,
@@ -88,6 +89,9 @@ __all__ = [
     "Note",
     "TimeCapsule",
     "CapsuleStatus",
+
+    # Lounge Resource models
+    "LoungeResource",
     
     # Billing models
     "SubscriptionPlan",

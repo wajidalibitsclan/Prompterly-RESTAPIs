@@ -16,8 +16,10 @@ from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
 from app.db.models.lounge import Lounge, LoungeMembership, AccessType
 from app.db.models.mentor import Category
-from app.db.models.billing import Subscription, Payment, SubscriptionStatus, LoungeSubscription
+from app.db.models.billing import Subscription, Payment, SubscriptionStatus, LoungeSubscription, PaymentStatus
 from app.db.models.note import Note
+from app.db.models.lounge_resource import LoungeResource
+from app.db.models.file import File as FileModel
 from app.db.models.chat import ChatMessage
 from app.schemas.admin import (
     UserManagementResponse,
@@ -38,6 +40,12 @@ from app.schemas.admin import (
 from app.core.security import hash_password
 from app.services.file_service import file_service
 from app.services.billing_service import billing_service
+from app.services.lounge_resource_service import lounge_resource_service
+from app.schemas.lounge_resource import (
+    LoungeResourceResponse,
+    LoungeResourceListResponse,
+    LoungeResourcesListResponse
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -82,7 +90,7 @@ async def get_system_stats(
     
     # Revenue
     total_revenue = db.query(func.sum(Payment.amount_cents)).filter(
-        Payment.status == 'succeeded'
+        Payment.status == PaymentStatus.SUCCEEDED
     ).scalar() or 0
     
     # Active users (last 30 days)
@@ -396,7 +404,7 @@ async def get_revenue_report(
         revenue = db.query(func.sum(Payment.amount_cents)).filter(
             Payment.created_at >= start_date,
             Payment.created_at < end_date,
-            Payment.status == 'succeeded'
+            Payment.status == PaymentStatus.SUCCEEDED
         ).scalar() or 0
         
         # Subscriptions
@@ -1552,3 +1560,318 @@ async def get_subscription_detail(
         "canceled_at": subscription.canceled_at,
         "payment_history": payment_history
     }
+
+
+# =============================================================================
+# Admin Lounge Resource Management
+# =============================================================================
+
+@router.get("/lounge-resources", response_model=LoungeResourcesListResponse)
+async def get_all_lounge_resources(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    lounge_id: Optional[int] = Query(None, description="Filter by lounge ID")
+):
+    """
+    Get all lounge resources (admin only)
+
+    - Requires admin role
+    - Supports filtering by lounge_id
+    - Returns paginated results
+    """
+    resources, total = await lounge_resource_service.get_all_lounges_resources(
+        db=db,
+        page=page,
+        page_size=page_size,
+        lounge_id=lounge_id
+    )
+
+    # Build response with file info
+    items = []
+    for resource in resources:
+        file_url = await lounge_resource_service.get_resource_file_url(resource.id, db)
+        file_record = db.query(FileModel).filter(FileModel.id == resource.file_id).first()
+
+        items.append(LoungeResourceListResponse(
+            id=resource.id,
+            lounge_id=resource.lounge_id,
+            title=resource.title,
+            description=resource.description,
+            file_url=file_url,
+            file_type=file_record.mime_type if file_record else None,
+            file_size=file_record.size_bytes if file_record else 0,
+            file_name=file_record.storage_path.split('/')[-1] if file_record and file_record.storage_path else None,
+            created_at=resource.created_at
+        ))
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+
+    return LoungeResourcesListResponse(
+        resources=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
+    )
+
+
+@router.get("/lounge-resources/{resource_id}", response_model=LoungeResourceResponse)
+async def get_lounge_resource(
+    resource_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Get single lounge resource details (admin only)
+    """
+    resource = await lounge_resource_service.get_resource(resource_id, db)
+
+    if not resource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resource not found"
+        )
+
+    file_url = await lounge_resource_service.get_resource_file_url(resource.id, db)
+    file_record = db.query(FileModel).filter(FileModel.id == resource.file_id).first()
+
+    # Get uploader name
+    uploader = db.query(User).filter(User.id == resource.uploaded_by_user_id).first()
+
+    return LoungeResourceResponse(
+        id=resource.id,
+        lounge_id=resource.lounge_id,
+        title=resource.title,
+        description=resource.description,
+        file_url=file_url,
+        file_type=file_record.mime_type if file_record else None,
+        file_size=file_record.size_bytes if file_record else 0,
+        uploaded_by_user_id=resource.uploaded_by_user_id,
+        uploaded_by_name=uploader.name if uploader else None,
+        created_at=resource.created_at,
+        updated_at=resource.updated_at
+    )
+
+
+@router.post("/lounge-resources", status_code=status.HTTP_201_CREATED, response_model=LoungeResourceResponse)
+async def create_lounge_resource(
+    lounge_id: int,
+    title: str,
+    file: UploadFile = File(...),
+    description: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Upload a new lounge resource (admin only)
+
+    - Requires admin role
+    - Uploads file and creates resource record
+    - Accepts any file type (pdf, docx, etc.)
+    """
+    try:
+        resource = await lounge_resource_service.create_resource(
+            lounge_id=lounge_id,
+            title=title,
+            file=file,
+            uploaded_by_user_id=admin_user.id,
+            db=db,
+            description=description
+        )
+
+        file_url = await lounge_resource_service.get_resource_file_url(resource.id, db)
+        file_record = db.query(FileModel).filter(FileModel.id == resource.file_id).first()
+
+        return LoungeResourceResponse(
+            id=resource.id,
+            lounge_id=resource.lounge_id,
+            title=resource.title,
+            description=resource.description,
+            file_url=file_url,
+            file_type=file_record.mime_type if file_record else None,
+            file_size=file_record.size_bytes if file_record else 0,
+            uploaded_by_user_id=resource.uploaded_by_user_id,
+            uploaded_by_name=admin_user.name,
+            created_at=resource.created_at,
+            updated_at=resource.updated_at
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to create lounge resource: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create resource"
+        )
+
+
+@router.put("/lounge-resources/{resource_id}", response_model=LoungeResourceResponse)
+async def update_lounge_resource(
+    resource_id: int,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Update lounge resource metadata (admin only)
+
+    - Requires admin role
+    - Updates title and/or description
+    - Does not replace the file
+    """
+    try:
+        resource = await lounge_resource_service.update_resource(
+            resource_id=resource_id,
+            db=db,
+            title=title,
+            description=description
+        )
+
+        file_url = await lounge_resource_service.get_resource_file_url(resource.id, db)
+        file_record = db.query(FileModel).filter(FileModel.id == resource.file_id).first()
+        uploader = db.query(User).filter(User.id == resource.uploaded_by_user_id).first()
+
+        return LoungeResourceResponse(
+            id=resource.id,
+            lounge_id=resource.lounge_id,
+            title=resource.title,
+            description=resource.description,
+            file_url=file_url,
+            file_type=file_record.mime_type if file_record else None,
+            file_size=file_record.size_bytes if file_record else 0,
+            uploaded_by_user_id=resource.uploaded_by_user_id,
+            uploaded_by_name=uploader.name if uploader else None,
+            created_at=resource.created_at,
+            updated_at=resource.updated_at
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to update lounge resource {resource_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update resource"
+        )
+
+
+@router.delete("/lounge-resources/{resource_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lounge_resource(
+    resource_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Delete lounge resource (admin only)
+
+    - Requires admin role
+    - Deletes resource record and associated file
+    """
+    try:
+        await lounge_resource_service.delete_resource(resource_id, db)
+        return None
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete lounge resource {resource_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete resource"
+        )
+
+
+# =============================================================================
+# Public Chatbot Configuration
+# =============================================================================
+
+from app.services.public_chatbot_service import public_chatbot_service
+from app.db.models.public_chatbot import PublicChatbotConfig
+from pydantic import BaseModel as PydanticBaseModel
+
+
+class ChatbotConfigUpdate(PydanticBaseModel):
+    """Schema for updating chatbot config"""
+    name: Optional[str] = None
+    welcome_message: Optional[str] = None
+    system_prompt: Optional[str] = None
+    input_placeholder: Optional[str] = None
+    header_subtitle: Optional[str] = None
+    is_enabled: Optional[bool] = None
+    avatar_url: Optional[str] = None
+
+
+class ChatbotConfigResponse(PydanticBaseModel):
+    """Schema for chatbot config response"""
+    id: int
+    name: str
+    welcome_message: str
+    system_prompt: Optional[str]
+    input_placeholder: str
+    header_subtitle: Optional[str]
+    is_enabled: bool
+    avatar_url: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/chatbot/config", response_model=ChatbotConfigResponse)
+async def get_chatbot_config(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Get public chatbot configuration (admin only)
+    """
+    config = await public_chatbot_service.get_config(db)
+
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chatbot configuration not found"
+        )
+
+    return config
+
+
+@router.put("/chatbot/config", response_model=ChatbotConfigResponse)
+async def update_chatbot_config(
+    config_data: ChatbotConfigUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Update public chatbot configuration (admin only)
+
+    - Updates the system prompt, welcome message, and other settings
+    - Creates default config if none exists
+    """
+    try:
+        config = await public_chatbot_service.update_config(
+            db=db,
+            data=config_data.model_dump(exclude_none=True)
+        )
+        return config
+
+    except Exception as e:
+        logger.error(f"Failed to update chatbot config: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update chatbot configuration"
+        )

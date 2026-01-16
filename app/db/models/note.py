@@ -18,6 +18,7 @@ class Note(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    lounge_id = Column(Integer, ForeignKey("lounges.id"), nullable=True, index=True)  # Optional lounge association
     section = Column(String(255), nullable=True)  # Section/category for grouping notes
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
@@ -31,9 +32,10 @@ class Note(Base):
         onupdate=datetime.utcnow,
         nullable=False
     )
-    
+
     # Relationships
     user = relationship("User", back_populates="notes")
+    lounge = relationship("Lounge", back_populates="notes")
     
     @property
     def tag_list(self) -> list:
