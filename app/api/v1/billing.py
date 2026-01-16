@@ -412,7 +412,8 @@ async def verify_lounge_checkout_session(
             try:
                 lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
                 if lounge:
-                    mentor_name = lounge.mentor.name if lounge.mentor else "Your Mentor"
+                    # Get mentor name (mentor.user.name since Mentor model has user relationship)
+                    mentor_name = lounge.mentor.user.name if lounge.mentor and lounge.mentor.user else "Your Mentor"
                     price = "$25/month" if plan_type_str == "monthly" else "$240/year"
                     stripe_sub = stripe.Subscription.retrieve(session.subscription)
                     next_billing = datetime.fromtimestamp(stripe_sub['current_period_end']).strftime("%B %d, %Y")
@@ -831,10 +832,10 @@ async def stripe_webhook(
                         lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
 
                         if user and lounge:
-                            # Get mentor name
+                            # Get mentor name (mentor.user.name since Mentor model has user relationship)
                             mentor_name = "Your Mentor"
-                            if lounge.mentor:
-                                mentor_name = lounge.mentor.name
+                            if lounge.mentor and lounge.mentor.user:
+                                mentor_name = lounge.mentor.user.name
 
                             # Calculate price and next billing date
                             price = "$25/month" if plan_type_str == "monthly" else "$240/year"
@@ -931,10 +932,10 @@ async def stripe_webhook(
                                 lounge = db.query(Lounge).filter(Lounge.id == lounge_sub.lounge_id).first()
 
                                 if user and lounge:
-                                    # Get mentor name
+                                    # Get mentor name (mentor.user.name since Mentor model has user relationship)
                                     mentor_name = "Your Mentor"
-                                    if lounge.mentor:
-                                        mentor_name = lounge.mentor.name
+                                    if lounge.mentor and lounge.mentor.user:
+                                        mentor_name = lounge.mentor.user.name
 
                                     # Determine plan type and price
                                     plan_type_str = lounge_sub.plan_type.value if lounge_sub.plan_type else 'monthly'
