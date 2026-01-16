@@ -823,6 +823,26 @@ class BillingService:
             if subscription.get('canceled_at'):
                 lounge_sub.canceled_at = datetime.fromtimestamp(subscription['canceled_at'])
 
+            # Sync plan_type and stripe_price_id from Stripe subscription
+            # This ensures upgrades/downgrades are properly reflected
+            items = subscription.get('items', {}).get('data', [])
+            if items:
+                current_stripe_price_id = items[0].get('price', {}).get('id')
+                if current_stripe_price_id and current_stripe_price_id != lounge_sub.stripe_price_id:
+                    logger.info(f"Detected price change: {lounge_sub.stripe_price_id} -> {current_stripe_price_id}")
+                    lounge_sub.stripe_price_id = current_stripe_price_id
+
+                    # Determine plan type from the price metadata or interval
+                    price_metadata = items[0].get('price', {}).get('metadata', {})
+                    price_interval = items[0].get('price', {}).get('recurring', {}).get('interval', 'month')
+
+                    if price_metadata.get('plan_type') == 'yearly' or price_interval == 'year':
+                        lounge_sub.plan_type = LoungePlanType.YEARLY
+                        logger.info(f"Updated plan_type to YEARLY for subscription {lounge_sub.id}")
+                    else:
+                        lounge_sub.plan_type = LoungePlanType.MONTHLY
+                        logger.info(f"Updated plan_type to MONTHLY for subscription {lounge_sub.id}")
+
             db.commit()
 
             logger.info(f"Updated lounge subscription {lounge_sub.id} from {old_status} to {new_status}")
@@ -1024,6 +1044,23 @@ class BillingService:
             raise ValueError("Lounge does not have yearly price configured")
 
         try:
+            # Verify yearly price ID is valid
+            yearly_price_id = lounge.stripe_yearly_price_id
+            logger.info(f"Yearly price ID from lounge: {yearly_price_id}")
+
+            if not yearly_price_id or yearly_price_id.strip() == '':
+                raise ValueError(f"Lounge {lounge_id} has empty stripe_yearly_price_id")
+
+            # Verify the price exists in Stripe
+            try:
+                stripe_price = stripe.Price.retrieve(yearly_price_id)
+                logger.info(f"Verified yearly price in Stripe: {stripe_price.id}, amount: {stripe_price.unit_amount}, active: {stripe_price.active}")
+                if not stripe_price.active:
+                    raise ValueError(f"Yearly price {yearly_price_id} is not active in Stripe")
+            except stripe.error.InvalidRequestError as price_error:
+                logger.error(f"Yearly price {yearly_price_id} does not exist in Stripe: {str(price_error)}")
+                raise ValueError(f"Yearly price {yearly_price_id} not found in Stripe")
+
             # Get current Stripe subscription to find the subscription item ID
             logger.info(f"Retrieving Stripe subscription: {subscription.stripe_subscription_id}")
             stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
@@ -1031,13 +1068,23 @@ class BillingService:
             current_price_id = stripe_sub['items']['data'][0]['price']['id']
             logger.info(f"Current Stripe subscription item: {subscription_item_id}, current_price: {current_price_id}")
 
+            # Check if already on yearly price
+            if current_price_id == yearly_price_id:
+                logger.info(f"Subscription already on yearly price {yearly_price_id}")
+                # Just update local DB if Stripe is already correct
+                subscription.plan_type = LoungePlanType.YEARLY
+                subscription.stripe_price_id = yearly_price_id
+                db.commit()
+                db.refresh(subscription)
+                return subscription
+
             # Update subscription in Stripe to yearly price
-            logger.info(f"Modifying Stripe subscription to yearly price: {lounge.stripe_yearly_price_id}")
+            logger.info(f"Modifying Stripe subscription from {current_price_id} to yearly price: {yearly_price_id}")
             updated_stripe_sub = stripe.Subscription.modify(
                 subscription.stripe_subscription_id,
                 items=[{
                     'id': subscription_item_id,
-                    'price': lounge.stripe_yearly_price_id,
+                    'price': yearly_price_id,
                 }],
                 proration_behavior='create_prorations' if prorate else 'none',
                 metadata={
@@ -1045,32 +1092,37 @@ class BillingService:
                     'upgraded_at': datetime.utcnow().isoformat()
                 }
             )
-            logger.info(f"Stripe subscription modified successfully. New status: {updated_stripe_sub.get('status')}")
 
-            # Update local subscription record
+            # Verify the update actually happened
+            new_price_id = updated_stripe_sub['items']['data'][0]['price']['id']
+            logger.info(f"Stripe subscription modified. New price: {new_price_id}, Status: {updated_stripe_sub.get('status')}")
+
+            if new_price_id != yearly_price_id:
+                logger.error(f"Stripe modification failed! Expected price {yearly_price_id}, got {new_price_id}")
+                raise Exception(f"Stripe update verification failed: price not changed")
+
+            # Update local subscription record ONLY after verifying Stripe was updated
             subscription.plan_type = LoungePlanType.YEARLY
-            subscription.stripe_price_id = lounge.stripe_yearly_price_id
+            subscription.stripe_price_id = yearly_price_id
 
             # Update renewal date from Stripe response
-            current_period_end = None
-            if hasattr(updated_stripe_sub, 'current_period') and updated_stripe_sub.current_period:
-                current_period_end = updated_stripe_sub.current_period.get('end')
-            if not current_period_end:
-                current_period_end = updated_stripe_sub.get('current_period_end')
-
+            current_period_end = updated_stripe_sub.get('current_period_end')
             if current_period_end:
                 subscription.renews_at = datetime.fromtimestamp(current_period_end)
 
             db.commit()
             db.refresh(subscription)
 
-            logger.info(f"Upgraded lounge subscription {subscription.id} from monthly to yearly (prorate={prorate})")
+            logger.info(f"Upgraded lounge subscription {subscription.id} from monthly to yearly (prorate={prorate}). Stripe verified.")
 
             return subscription
 
         except stripe.error.StripeError as e:
             logger.error(f"Stripe error upgrading subscription: {str(e)}")
             raise Exception(f"Failed to upgrade subscription: {str(e)}")
+        except ValueError as e:
+            logger.error(f"Validation error upgrading subscription: {str(e)}")
+            raise
 
 
 # Singleton instance
