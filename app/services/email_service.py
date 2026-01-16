@@ -4,12 +4,16 @@ Uses SMTP configuration from settings
 
 All email sending functions have sync versions for use with FastAPI BackgroundTasks
 to prevent blocking the main application thread.
+
+Email logs are written to a dedicated log file for easy debugging.
 """
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Optional
 import logging
+from pathlib import Path
+from datetime import datetime
 
 from app.core.config import settings
 from app.services.email_templates import (
@@ -27,7 +31,46 @@ from app.services.email_templates import (
     get_payment_method_update_email_template,
 )
 
-logger = logging.getLogger(__name__)
+
+def setup_email_logger() -> logging.Logger:
+    """
+    Set up dedicated email logger with file handler.
+    Logs are written to the file specified in EMAIL_LOG_FILE setting.
+    """
+    email_logger = logging.getLogger("email_service")
+    email_logger.setLevel(logging.DEBUG)
+
+    # Avoid adding duplicate handlers
+    if email_logger.handlers:
+        return email_logger
+
+    # Create logs directory if it doesn't exist
+    log_file_path = Path(settings.EMAIL_LOG_FILE)
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # File handler with detailed formatting
+    file_handler = logging.FileHandler(log_file_path)
+    file_handler.setLevel(logging.DEBUG)
+
+    # Detailed format for email logs
+    formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)-8s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    email_logger.addHandler(file_handler)
+
+    # Also add console handler for development
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    email_logger.addHandler(console_handler)
+
+    return email_logger
+
+
+# Initialize the email logger
+logger = setup_email_logger()
 
 
 def send_email_sync(
@@ -53,14 +96,22 @@ def send_email_sync(
         True if email sent successfully, False otherwise
     """
     server = None
+    # Handle single or multiple recipients
+    if isinstance(to, str):
+        to = [to]
+    recipients_str = ", ".join(to)
+
+    logger.info("=" * 60)
+    logger.info(f"EMAIL SEND ATTEMPT")
+    logger.info(f"To: {recipients_str}")
+    logger.info(f"Subject: {subject}")
+    logger.info(f"Timestamp: {datetime.now().isoformat()}")
+    logger.info("-" * 60)
+
     try:
         # Create message
         msg = MIMEMultipart("alternative")
         msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
-
-        # Handle single or multiple recipients
-        if isinstance(to, str):
-            to = [to]
         msg["To"] = ", ".join(to)
 
         if cc:
@@ -78,8 +129,9 @@ def send_email_sync(
             msg.attach(html_part)
 
         # Log SMTP settings for debugging
-        logger.info(f"Connecting to SMTP: {settings.MAIL_SERVER}:{settings.MAIL_PORT} TLS={settings.MAIL_TLS} SSL={settings.MAIL_SSL}")
-        logger.info(f"Using credentials: {settings.MAIL_USERNAME[:4]}***")
+        logger.debug(f"SMTP Server: {settings.MAIL_SERVER}:{settings.MAIL_PORT}")
+        logger.debug(f"TLS: {settings.MAIL_TLS}, SSL: {settings.MAIL_SSL}")
+        logger.debug(f"Username: {settings.MAIL_USERNAME[:4]}***")
 
         # Connect to SMTP server with longer timeout
         server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=60)
@@ -95,24 +147,38 @@ def send_email_sync(
 
         # Login with credentials
         if settings.MAIL_USERNAME and settings.MAIL_PASSWORD:
-            logger.info("Attempting SMTP login...")
+            logger.debug("Attempting SMTP login...")
             server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-            logger.info("SMTP login successful")
+            logger.debug("SMTP login successful")
 
         # Send email
         recipients = to + (cc or []) + (bcc or [])
         server.sendmail(settings.MAIL_FROM, recipients, msg.as_string())
-        logger.info(f"Email sent successfully to {to}")
+        logger.info(f"SUCCESS - Email sent to: {recipients_str}")
+        logger.info("=" * 60)
         return True
 
     except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"SMTP Authentication failed: {str(e)}")
+        logger.error(f"FAILED - SMTP Authentication Error")
+        logger.error(f"To: {recipients_str}")
+        logger.error(f"Subject: {subject}")
+        logger.error(f"Error: {str(e)}")
+        logger.error("=" * 60)
         return False
     except smtplib.SMTPException as e:
-        logger.error(f"SMTP error: {str(e)}")
+        logger.error(f"FAILED - SMTP Error")
+        logger.error(f"To: {recipients_str}")
+        logger.error(f"Subject: {subject}")
+        logger.error(f"Error: {str(e)}")
+        logger.error("=" * 60)
         return False
     except Exception as e:
-        logger.error(f"Failed to send email: {str(e)}", exc_info=True)
+        logger.error(f"FAILED - Unexpected Error")
+        logger.error(f"To: {recipients_str}")
+        logger.error(f"Subject: {subject}")
+        logger.error(f"Error Type: {type(e).__name__}")
+        logger.error(f"Error: {str(e)}", exc_info=True)
+        logger.error("=" * 60)
         return False
     finally:
         if server:

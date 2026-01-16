@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
     LOG_FILE: Optional[str] = None  # Path to log file, e.g., "logs/app.log"
+    EMAIL_LOG_FILE: str = "logs/email.log"  # Dedicated email log file
 
     # Sentry
     SENTRY_DSN: Optional[str] = None
