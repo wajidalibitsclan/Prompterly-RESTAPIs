@@ -823,26 +823,6 @@ class BillingService:
             if subscription.get('canceled_at'):
                 lounge_sub.canceled_at = datetime.fromtimestamp(subscription['canceled_at'])
 
-            # Sync plan_type and stripe_price_id from Stripe subscription
-            # This ensures upgrades/downgrades are properly reflected
-            items = subscription.get('items', {}).get('data', [])
-            if items:
-                current_stripe_price_id = items[0].get('price', {}).get('id')
-                if current_stripe_price_id and current_stripe_price_id != lounge_sub.stripe_price_id:
-                    logger.info(f"Detected price change: {lounge_sub.stripe_price_id} -> {current_stripe_price_id}")
-                    lounge_sub.stripe_price_id = current_stripe_price_id
-
-                    # Determine plan type from the price metadata or interval
-                    price_metadata = items[0].get('price', {}).get('metadata', {})
-                    price_interval = items[0].get('price', {}).get('recurring', {}).get('interval', 'month')
-
-                    if price_metadata.get('plan_type') == 'yearly' or price_interval == 'year':
-                        lounge_sub.plan_type = LoungePlanType.YEARLY
-                        logger.info(f"Updated plan_type to YEARLY for subscription {lounge_sub.id}")
-                    else:
-                        lounge_sub.plan_type = LoungePlanType.MONTHLY
-                        logger.info(f"Updated plan_type to MONTHLY for subscription {lounge_sub.id}")
-
             db.commit()
 
             logger.info(f"Updated lounge subscription {lounge_sub.id} from {old_status} to {new_status}")
