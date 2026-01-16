@@ -625,12 +625,16 @@ async def upgrade_lounge_subscription(
     - Set prorate=false to apply at next billing cycle
     """
     try:
+        logger.info(f"Upgrade request: user={current_user.id}, lounge={lounge_id}, prorate={upgrade_data.prorate}")
+
         subscription = await billing_service.upgrade_lounge_subscription(
             user_id=current_user.id,
             lounge_id=lounge_id,
             db=db,
             prorate=upgrade_data.prorate
         )
+
+        logger.info(f"Upgrade successful: subscription_id={subscription.id}, plan_type={subscription.plan_type.value}, stripe_price_id={subscription.stripe_price_id}")
 
         lounge = subscription.lounge
 

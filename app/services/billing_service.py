@@ -1025,10 +1025,14 @@ class BillingService:
 
         try:
             # Get current Stripe subscription to find the subscription item ID
+            logger.info(f"Retrieving Stripe subscription: {subscription.stripe_subscription_id}")
             stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
             subscription_item_id = stripe_sub['items']['data'][0]['id']
+            current_price_id = stripe_sub['items']['data'][0]['price']['id']
+            logger.info(f"Current Stripe subscription item: {subscription_item_id}, current_price: {current_price_id}")
 
             # Update subscription in Stripe to yearly price
+            logger.info(f"Modifying Stripe subscription to yearly price: {lounge.stripe_yearly_price_id}")
             updated_stripe_sub = stripe.Subscription.modify(
                 subscription.stripe_subscription_id,
                 items=[{
@@ -1041,6 +1045,7 @@ class BillingService:
                     'upgraded_at': datetime.utcnow().isoformat()
                 }
             )
+            logger.info(f"Stripe subscription modified successfully. New status: {updated_stripe_sub.get('status')}")
 
             # Update local subscription record
             subscription.plan_type = LoungePlanType.YEARLY
