@@ -880,32 +880,35 @@ async def stripe_webhook(
                 await billing_service.handle_subscription_updated(event_data, db)
 
         elif event_type in ['invoice.paid', 'invoice_payment.paid', 'invoice.payment_succeeded']:
-            # Handle successful subscription renewal
+            # Handle successful subscription payment (new subscription or renewal)
             logger.info(f"Processing {event_type} event")
             logger.info(f"Event data keys: {list(event_data.keys())}")
 
             subscription_id = event_data.get('subscription')
+            billing_reason = event_data.get('billing_reason')
+            invoice_obj = None
 
             # For invoice_payment.paid, we need to get subscription from the invoice
             if not subscription_id and event_data.get('invoice'):
                 invoice_id = event_data.get('invoice')
                 logger.info(f"No subscription in event, fetching from invoice {invoice_id}")
                 try:
-                    invoice = stripe.Invoice.retrieve(invoice_id)
+                    invoice_obj = stripe.Invoice.retrieve(invoice_id)
                     # Try direct subscription field first
-                    subscription_id = invoice.get('subscription')
+                    subscription_id = invoice_obj.get('subscription')
+                    billing_reason = invoice_obj.get('billing_reason')
                     # If not found, check parent.subscription_details (new Stripe API structure)
                     if not subscription_id:
-                        parent = invoice.get('parent', {})
+                        parent = invoice_obj.get('parent', {})
                         if parent and parent.get('subscription_details'):
                             subscription_id = parent['subscription_details'].get('subscription')
                             logger.info(f"Found subscription in parent.subscription_details: {subscription_id}")
-                    logger.info(f"Got subscription {subscription_id} from invoice")
+                    logger.info(f"Got subscription {subscription_id} from invoice, billing_reason: {billing_reason}")
                 except Exception as e:
                     logger.error(f"Error fetching invoice {invoice_id}: {str(e)}")
 
             if subscription_id:
-                logger.info(f"Invoice paid for subscription {subscription_id}")
+                logger.info(f"Invoice paid for subscription {subscription_id}, billing_reason: {billing_reason}")
                 # Fetch the updated subscription from Stripe
                 try:
                     stripe_sub = stripe.Subscription.retrieve(subscription_id)
@@ -918,6 +921,38 @@ async def stripe_webhook(
                         logger.info(f"Found lounge subscription {lounge_sub.id}, updating...")
                         await billing_service.handle_lounge_subscription_updated(stripe_sub, db)
                         logger.info(f"Lounge subscription {lounge_sub.id} updated successfully")
+
+                        # Send subscription confirmation email for NEW subscriptions
+                        # billing_reason = 'subscription_create' means this is the first invoice
+                        if billing_reason == 'subscription_create':
+                            try:
+                                from app.db.models.lounge import Lounge
+                                user = db.query(User).filter(User.id == lounge_sub.user_id).first()
+                                lounge = db.query(Lounge).filter(Lounge.id == lounge_sub.lounge_id).first()
+
+                                if user and lounge:
+                                    # Get mentor name
+                                    mentor_name = "Your Mentor"
+                                    if lounge.mentor:
+                                        mentor_name = lounge.mentor.name
+
+                                    # Determine plan type and price
+                                    plan_type_str = lounge_sub.plan_type.value if lounge_sub.plan_type else 'monthly'
+                                    price = "$25/month" if plan_type_str == "monthly" else "$240/year"
+                                    next_billing = datetime.fromtimestamp(stripe_sub['current_period_end']).strftime("%B %d, %Y")
+
+                                    send_subscription_confirmation_email_sync(
+                                        user.email,
+                                        user.name,
+                                        lounge.title,
+                                        mentor_name,
+                                        plan_type_str.capitalize(),
+                                        price,
+                                        next_billing
+                                    )
+                                    logger.info(f"Subscription confirmation email sent to {user.email} (from invoice.paid)")
+                            except Exception as email_error:
+                                logger.error(f"Error sending subscription confirmation email from invoice.paid: {str(email_error)}")
                     else:
                         logger.info("Not a lounge subscription, checking regular subscriptions...")
                         await billing_service.handle_subscription_updated(stripe_sub, db)
