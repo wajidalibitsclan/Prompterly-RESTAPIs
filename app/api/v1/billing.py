@@ -323,6 +323,7 @@ async def create_lounge_checkout(
 @router.post("/lounge/verify-session")
 async def verify_lounge_checkout_session(
     session_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -332,7 +333,7 @@ async def verify_lounge_checkout_session(
     This is a fallback for when webhooks don't fire properly.
     Called after user returns from successful Stripe checkout.
     """
-    from app.db.models.lounge import LoungeMembership, MembershipRole
+    from app.db.models.lounge import Lounge, LoungeMembership, MembershipRole
     from app.db.models.billing import SubscriptionStatus, LoungePlanType
 
     try:
@@ -365,6 +366,7 @@ async def verify_lounge_checkout_session(
             LoungeSubscription.stripe_subscription_id == session.subscription
         ).first()
 
+        should_send_email = False
         if not existing_sub and session.subscription:
             # Create subscription record (webhook didn't fire)
             stripe_sub = stripe.Subscription.retrieve(session.subscription)
@@ -384,6 +386,7 @@ async def verify_lounge_checkout_session(
             db.add(lounge_subscription)
             db.commit()
             logger.info(f"Created lounge subscription via verify for user {user_id}, lounge {lounge_id}")
+            should_send_email = True
 
         # Check if membership exists
         existing_membership = db.query(LoungeMembership).filter(
@@ -402,6 +405,33 @@ async def verify_lounge_checkout_session(
             db.add(membership)
             db.commit()
             logger.info(f"Created lounge membership via verify for user {user_id} in lounge {lounge_id}")
+            should_send_email = True
+
+        # Send subscription confirmation email if subscription/membership was created
+        if should_send_email:
+            try:
+                lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+                if lounge:
+                    mentor_name = lounge.mentor.name if lounge.mentor else "Your Mentor"
+                    price = "$25/month" if plan_type_str == "monthly" else "$240/year"
+                    stripe_sub = stripe.Subscription.retrieve(session.subscription)
+                    next_billing = datetime.fromtimestamp(stripe_sub['current_period_end']).strftime("%B %d, %Y")
+
+                    background_tasks.add_task(
+                        send_subscription_confirmation_email_sync,
+                        current_user.email,
+                        current_user.name,
+                        lounge.title,
+                        mentor_name,
+                        plan_type_str.capitalize(),
+                        price,
+                        next_billing
+                    )
+                    logger.info(f"Queued subscription confirmation email for {current_user.email}")
+            except Exception as email_error:
+                logger.error(f"Error sending subscription confirmation email: {str(email_error)}")
+
+        if not existing_membership:
             return {"success": True, "message": "Membership created", "lounge_id": lounge_id}
 
         return {"success": True, "message": "Already a member", "lounge_id": lounge_id}
