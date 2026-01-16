@@ -27,7 +27,7 @@ from app.services.note_service import note_service
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_notes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -104,7 +104,7 @@ async def list_notes(
     }
 
 
-@router.post("/", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_note(
     note_data: NoteCreate,
     db: Session = Depends(get_db),
