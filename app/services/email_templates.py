@@ -89,7 +89,7 @@ def get_base_template(
                     <!-- Logo Header -->
                     <tr>
                         <td style="text-align: center; padding-bottom: 30px;">
-                            <img src="https://prompterly.bitsclan.us/images/landing-logo.png"
+                            <img src="https://prompterly.bitsclan.us/images/black-logo.png"
                                  alt="Prompterly"
                                  width="180"
                                  style="display: inline-block; max-width: 180px; height: auto;">
