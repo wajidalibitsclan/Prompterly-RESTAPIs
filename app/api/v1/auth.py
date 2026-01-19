@@ -771,8 +771,7 @@ async def google_callback(
     logger.info(f"Google OAuth login successful: {user.email} (ID: {user.id})")
 
     # Redirect to frontend with tokens in URL params
-    frontend_url = "http://localhost:5173"
-    redirect_url = f"{frontend_url}/auth/google/callback?access_token={jwt_access_token}&refresh_token={jwt_refresh_token}"
+    redirect_url = f"{settings.FRONTEND_URL}/auth/google/callback?access_token={jwt_access_token}&refresh_token={jwt_refresh_token}"
 
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url=redirect_url)

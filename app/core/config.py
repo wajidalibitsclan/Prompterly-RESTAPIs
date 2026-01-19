@@ -40,9 +40,12 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # OAuth - Google
-    GOOGLE_CLIENT_ID: str
-    GOOGLE_CLIENT_SECRET: str
-    GOOGLE_REDIRECT_URI: str
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = ""
+
+    # Frontend URL (for OAuth redirects)
+    FRONTEND_URL: str = ""
     
     # Storage Configuration
     STORAGE_TYPE: str = "local"  # "local" or "s3"
