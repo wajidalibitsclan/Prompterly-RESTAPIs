@@ -450,32 +450,45 @@ class BillingService:
     ) -> str:
         """
         Get or create Stripe customer for user
-        
+
         Args:
             user: User instance
             db: Database session
-            
+
         Returns:
             Stripe customer ID
         """
-        # In production, store stripe_customer_id in user table
-        # For now, create new customer each time
-        
+        # Return existing customer ID if user already has one
+        if user.stripe_customer_id:
+            logger.info(f"Using existing Stripe customer {user.stripe_customer_id} for user {user.id}")
+            return user.stripe_customer_id
+
         try:
-            customer = stripe.Customer.create(
-                email=user.email,
-                name=user.name,
-                metadata={
-                    'user_id': str(user.id)
-                }
-            )
-            
-            logger.info(f"Created Stripe customer {customer.id} for user {user.id}")
+            # Check if customer already exists in Stripe by email
+            existing_customers = stripe.Customer.list(email=user.email, limit=1)
+            if existing_customers.data:
+                customer = existing_customers.data[0]
+                logger.info(f"Found existing Stripe customer {customer.id} by email for user {user.id}")
+            else:
+                # Create new Stripe customer
+                customer = stripe.Customer.create(
+                    email=user.email,
+                    name=user.name,
+                    metadata={
+                        'user_id': str(user.id)
+                    }
+                )
+                logger.info(f"Created new Stripe customer {customer.id} for user {user.id}")
+
+            # Store customer ID in user record
+            user.stripe_customer_id = customer.id
+            db.commit()
+            logger.info(f"Stored Stripe customer ID {customer.id} for user {user.id}")
 
             return customer.id
 
         except stripe.error.StripeError as e:
-            logger.error(f"Error creating Stripe customer: {str(e)}")
+            logger.error(f"Error with Stripe customer: {str(e)}")
             raise
 
     # =========================================================================

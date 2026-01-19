@@ -25,6 +25,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     name = Column(String(255), nullable=False)
     avatar_url = Column(String(500), nullable=True)
+    stripe_customer_id = Column(String(255), nullable=True, index=True)  # Stripe customer ID for billing
     role = Column(
         SQLEnum(UserRole, values_callable=lambda obj: [e.value for e in obj]),
         default=UserRole.MEMBER,
