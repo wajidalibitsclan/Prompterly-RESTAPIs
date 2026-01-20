@@ -41,6 +41,7 @@ class KBCategoryResponse(KBCategoryBase):
     id: int
     lounge_id: Optional[int] = None
     lounge_name: Optional[str] = None
+    mentor_name: Optional[str] = None  # Mentor who owns the lounge
     created_at: datetime
     updated_at: datetime
     prompt_count: int = 0
@@ -108,6 +109,7 @@ class KBPromptResponse(BaseModel):
     category_name: Optional[str] = None
     lounge_id: Optional[int] = None
     lounge_name: Optional[str] = None
+    mentor_name: Optional[str] = None  # Mentor who owns the lounge
     created_by_name: Optional[str] = None
 
     class Config:
@@ -171,6 +173,7 @@ class KBDocumentResponse(BaseModel):
     category_name: Optional[str] = None
     lounge_id: Optional[int] = None
     lounge_name: Optional[str] = None
+    mentor_name: Optional[str] = None  # Mentor who owns the lounge
     created_by_name: Optional[str] = None
     download_url: Optional[str] = None
 
@@ -237,6 +240,7 @@ class KBFaqResponse(BaseModel):
     category_name: Optional[str] = None
     lounge_id: Optional[int] = None
     lounge_name: Optional[str] = None
+    mentor_name: Optional[str] = None  # Mentor who owns the lounge
     created_by_name: Optional[str] = None
 
     class Config:

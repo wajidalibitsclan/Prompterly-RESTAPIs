@@ -29,6 +29,13 @@ from app.schemas.knowledge_base import (
 router = APIRouter()
 
 
+def get_mentor_name(item) -> Optional[str]:
+    """Helper to get mentor name from a KB item's lounge"""
+    if item.lounge and item.lounge.mentor and item.lounge.mentor.user:
+        return item.lounge.mentor.user.name
+    return None
+
+
 # ============== Categories ==============
 
 @router.get("/categories", response_model=List[KBCategoryResponse])
@@ -57,6 +64,7 @@ async def list_categories(
             is_active=cat.is_active,
             lounge_id=cat.lounge_id,
             lounge_name=cat.lounge.title if cat.lounge else None,
+            mentor_name=get_mentor_name(cat),
             created_at=cat.created_at,
             updated_at=cat.updated_at,
             prompt_count=counts["prompt_count"],
@@ -86,6 +94,7 @@ async def create_category(
         is_active=category.is_active,
         lounge_id=category.lounge_id,
         lounge_name=category.lounge.title if category.lounge else None,
+        mentor_name=get_mentor_name(category),
         created_at=category.created_at,
         updated_at=category.updated_at,
         prompt_count=0,
@@ -116,6 +125,7 @@ async def get_category(
         is_active=category.is_active,
         lounge_id=category.lounge_id,
         lounge_name=category.lounge.title if category.lounge else None,
+        mentor_name=get_mentor_name(category),
         created_at=category.created_at,
         updated_at=category.updated_at,
         **counts
@@ -148,6 +158,7 @@ async def update_category(
         is_active=category.is_active,
         lounge_id=category.lounge_id,
         lounge_name=category.lounge.title if category.lounge else None,
+        mentor_name=get_mentor_name(category),
         created_at=category.created_at,
         updated_at=category.updated_at,
         **counts
@@ -203,6 +214,7 @@ async def list_prompts(
             category_name=p.category.name if p.category else None,
             lounge_id=p.lounge_id,
             lounge_name=p.lounge.title if p.lounge else None,
+            mentor_name=get_mentor_name(p),
             created_by_name=p.created_by.name if p.created_by else None
         ) for p in prompts
     ]
@@ -266,6 +278,7 @@ async def create_prompt(
             "category_name": prompt.category.name if prompt.category else None,
             "lounge_id": prompt.lounge_id,
             "lounge_name": prompt.lounge.title if prompt.lounge else None,
+            "mentor_name": get_mentor_name(prompt),
             "created_by_name": admin_user.name
         },
         "job_id": job_id
@@ -299,6 +312,7 @@ async def get_prompt(
         category_name=prompt.category.name if prompt.category else None,
         lounge_id=prompt.lounge_id,
         lounge_name=prompt.lounge.title if prompt.lounge else None,
+        mentor_name=get_mentor_name(prompt),
         created_by_name=prompt.created_by.name if prompt.created_by else None
     )
 
@@ -378,6 +392,7 @@ async def update_prompt(
             "category_name": prompt.category.name if prompt.category else None,
             "lounge_id": prompt.lounge_id,
             "lounge_name": prompt.lounge.title if prompt.lounge else None,
+            "mentor_name": get_mentor_name(prompt),
             "created_by_name": prompt.created_by.name if prompt.created_by else None
         },
         "job_id": job_id
@@ -423,6 +438,7 @@ async def regenerate_prompt_embedding(
         category_name=prompt.category.name if prompt.category else None,
         lounge_id=prompt.lounge_id,
         lounge_name=prompt.lounge.title if prompt.lounge else None,
+        mentor_name=get_mentor_name(prompt),
         created_by_name=prompt.created_by.name if prompt.created_by else None
     )
 
@@ -469,6 +485,7 @@ async def list_documents(
             category_name=d.category.name if d.category else None,
             lounge_id=d.lounge_id,
             lounge_name=d.lounge.title if d.lounge else None,
+            mentor_name=get_mentor_name(d),
             created_by_name=d.created_by.name if d.created_by else None
         ) for d in documents
     ]
@@ -532,6 +549,7 @@ async def upload_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        mentor_name=get_mentor_name(document),
         created_by_name=admin_user.name
     )
 
@@ -567,6 +585,7 @@ async def get_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        mentor_name=get_mentor_name(document),
         created_by_name=document.created_by.name if document.created_by else None
     )
 
@@ -606,6 +625,7 @@ async def update_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        mentor_name=get_mentor_name(document),
         created_by_name=document.created_by.name if document.created_by else None
     )
 
@@ -653,6 +673,7 @@ async def reprocess_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        mentor_name=get_mentor_name(document),
         created_by_name=document.created_by.name if document.created_by else None
     )
 
@@ -709,6 +730,7 @@ async def list_faqs(
             category_name=f.category.name if f.category else None,
             lounge_id=f.lounge_id,
             lounge_name=f.lounge.title if f.lounge else None,
+            mentor_name=get_mentor_name(f),
             created_by_name=f.created_by.name if f.created_by else None
         ) for f in faqs
     ]
@@ -745,6 +767,7 @@ async def create_faq(
         category_name=faq.category.name if faq.category else None,
         lounge_id=faq.lounge_id,
         lounge_name=faq.lounge.title if faq.lounge else None,
+        mentor_name=get_mentor_name(faq),
         created_by_name=admin_user.name
     )
 
@@ -778,6 +801,7 @@ async def get_faq(
         category_name=faq.category.name if faq.category else None,
         lounge_id=faq.lounge_id,
         lounge_name=faq.lounge.title if faq.lounge else None,
+        mentor_name=get_mentor_name(faq),
         created_by_name=faq.created_by.name if faq.created_by else None
     )
 
@@ -815,6 +839,7 @@ async def update_faq(
         category_name=faq.category.name if faq.category else None,
         lounge_id=faq.lounge_id,
         lounge_name=faq.lounge.title if faq.lounge else None,
+        mentor_name=get_mentor_name(faq),
         created_by_name=faq.created_by.name if faq.created_by else None
     )
 
