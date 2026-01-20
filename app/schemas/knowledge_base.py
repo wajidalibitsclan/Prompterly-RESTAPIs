@@ -109,7 +109,9 @@ class KBPromptResponse(BaseModel):
     category_name: Optional[str] = None
     lounge_id: Optional[int] = None
     lounge_name: Optional[str] = None
+    lounge_image: Optional[str] = None  # Lounge profile image URL
     mentor_name: Optional[str] = None  # Mentor who owns the lounge
+    mentor_image: Optional[str] = None  # Mentor profile image URL
     created_by_name: Optional[str] = None
 
     class Config:
@@ -173,7 +175,9 @@ class KBDocumentResponse(BaseModel):
     category_name: Optional[str] = None
     lounge_id: Optional[int] = None
     lounge_name: Optional[str] = None
+    lounge_image: Optional[str] = None  # Lounge profile image URL
     mentor_name: Optional[str] = None  # Mentor who owns the lounge
+    mentor_image: Optional[str] = None  # Mentor profile image URL
     created_by_name: Optional[str] = None
     download_url: Optional[str] = None
 
@@ -240,7 +244,9 @@ class KBFaqResponse(BaseModel):
     category_name: Optional[str] = None
     lounge_id: Optional[int] = None
     lounge_name: Optional[str] = None
+    lounge_image: Optional[str] = None  # Lounge profile image URL
     mentor_name: Optional[str] = None  # Mentor who owns the lounge
+    mentor_image: Optional[str] = None  # Mentor profile image URL
     created_by_name: Optional[str] = None
 
     class Config:

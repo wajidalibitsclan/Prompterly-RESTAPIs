@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.core.jwt import get_current_admin
 from app.db.models.user import User
 from app.services.knowledge_base_service import knowledge_base_service
+from app.services import file_service
 from app.schemas.knowledge_base import (
     # Category
     KBCategoryCreate, KBCategoryUpdate, KBCategoryResponse,
@@ -33,6 +34,23 @@ def get_mentor_name(item) -> Optional[str]:
     """Helper to get mentor name from a KB item's lounge"""
     if item.lounge and item.lounge.mentor and item.lounge.mentor.user:
         return item.lounge.mentor.user.name
+    return None
+
+
+async def get_lounge_image(item, db: Session) -> Optional[str]:
+    """Helper to get lounge profile image URL from a KB item's lounge"""
+    if item.lounge and item.lounge.profile_image_id:
+        try:
+            return await file_service.get_file_url(item.lounge.profile_image_id, db)
+        except Exception:
+            return None
+    return None
+
+
+def get_mentor_image(item) -> Optional[str]:
+    """Helper to get mentor profile image URL from a KB item's lounge"""
+    if item.lounge and item.lounge.mentor and item.lounge.mentor.user:
+        return item.lounge.mentor.user.avatar_url
     return None
 
 
@@ -197,8 +215,10 @@ async def list_prompts(
     )
     pages = (total + limit - 1) // limit if total > 0 else 1
 
-    items = [
-        KBPromptResponse(
+    items = []
+    for p in prompts:
+        lounge_image = await get_lounge_image(p, db)
+        items.append(KBPromptResponse(
             id=p.id,
             title=p.title,
             content=p.content,
@@ -214,10 +234,11 @@ async def list_prompts(
             category_name=p.category.name if p.category else None,
             lounge_id=p.lounge_id,
             lounge_name=p.lounge.title if p.lounge else None,
+            lounge_image=lounge_image,
             mentor_name=get_mentor_name(p),
+            mentor_image=get_mentor_image(p),
             created_by_name=p.created_by.name if p.created_by else None
-        ) for p in prompts
-    ]
+        ))
 
     return PaginatedPromptsResponse(
         items=items, total=total, page=page, limit=limit, pages=pages
@@ -261,6 +282,7 @@ async def create_prompt(
             entity_id=prompt.id
         )
 
+    lounge_image = await get_lounge_image(prompt, db)
     return {
         "prompt": {
             "id": prompt.id,
@@ -278,7 +300,9 @@ async def create_prompt(
             "category_name": prompt.category.name if prompt.category else None,
             "lounge_id": prompt.lounge_id,
             "lounge_name": prompt.lounge.title if prompt.lounge else None,
+            "lounge_image": lounge_image,
             "mentor_name": get_mentor_name(prompt),
+            "mentor_image": get_mentor_image(prompt),
             "created_by_name": admin_user.name
         },
         "job_id": job_id
@@ -296,6 +320,7 @@ async def get_prompt(
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
+    lounge_image = await get_lounge_image(prompt, db)
     return KBPromptResponse(
         id=prompt.id,
         title=prompt.title,
@@ -312,7 +337,9 @@ async def get_prompt(
         category_name=prompt.category.name if prompt.category else None,
         lounge_id=prompt.lounge_id,
         lounge_name=prompt.lounge.title if prompt.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(prompt),
+        mentor_image=get_mentor_image(prompt),
         created_by_name=prompt.created_by.name if prompt.created_by else None
     )
 
@@ -375,6 +402,7 @@ async def update_prompt(
             entity_id=prompt.id
         )
 
+    lounge_image = await get_lounge_image(prompt, db)
     return {
         "prompt": {
             "id": prompt.id,
@@ -392,7 +420,9 @@ async def update_prompt(
             "category_name": prompt.category.name if prompt.category else None,
             "lounge_id": prompt.lounge_id,
             "lounge_name": prompt.lounge.title if prompt.lounge else None,
+            "lounge_image": lounge_image,
             "mentor_name": get_mentor_name(prompt),
+            "mentor_image": get_mentor_image(prompt),
             "created_by_name": prompt.created_by.name if prompt.created_by else None
         },
         "job_id": job_id
@@ -422,6 +452,7 @@ async def regenerate_prompt_embedding(
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
+    lounge_image = await get_lounge_image(prompt, db)
     return KBPromptResponse(
         id=prompt.id,
         title=prompt.title,
@@ -438,7 +469,9 @@ async def regenerate_prompt_embedding(
         category_name=prompt.category.name if prompt.category else None,
         lounge_id=prompt.lounge_id,
         lounge_name=prompt.lounge.title if prompt.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(prompt),
+        mentor_image=get_mentor_image(prompt),
         created_by_name=prompt.created_by.name if prompt.created_by else None
     )
 
@@ -464,8 +497,10 @@ async def list_documents(
     )
     pages = (total + limit - 1) // limit if total > 0 else 1
 
-    items = [
-        KBDocumentResponse(
+    items = []
+    for d in documents:
+        lounge_image = await get_lounge_image(d, db)
+        items.append(KBDocumentResponse(
             id=d.id,
             title=d.title,
             description=d.description,
@@ -485,10 +520,11 @@ async def list_documents(
             category_name=d.category.name if d.category else None,
             lounge_id=d.lounge_id,
             lounge_name=d.lounge.title if d.lounge else None,
+            lounge_image=lounge_image,
             mentor_name=get_mentor_name(d),
+            mentor_image=get_mentor_image(d),
             created_by_name=d.created_by.name if d.created_by else None
-        ) for d in documents
-    ]
+        ))
 
     return PaginatedDocumentsResponse(
         items=items, total=total, page=page, limit=limit, pages=pages
@@ -529,6 +565,7 @@ async def upload_document(
     )
     db.refresh(document)  # Refresh to get lounge relationship
 
+    lounge_image = await get_lounge_image(document, db)
     return KBDocumentResponse(
         id=document.id,
         title=document.title,
@@ -549,7 +586,9 @@ async def upload_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(document),
+        mentor_image=get_mentor_image(document),
         created_by_name=admin_user.name
     )
 
@@ -565,6 +604,7 @@ async def get_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    lounge_image = await get_lounge_image(document, db)
     return KBDocumentResponse(
         id=document.id,
         title=document.title,
@@ -585,7 +625,9 @@ async def get_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(document),
+        mentor_image=get_mentor_image(document),
         created_by_name=document.created_by.name if document.created_by else None
     )
 
@@ -605,6 +647,7 @@ async def update_document(
         raise HTTPException(status_code=404, detail="Document not found")
 
     db.refresh(document)  # Refresh to get lounge relationship
+    lounge_image = await get_lounge_image(document, db)
     return KBDocumentResponse(
         id=document.id,
         title=document.title,
@@ -625,7 +668,9 @@ async def update_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(document),
+        mentor_image=get_mentor_image(document),
         created_by_name=document.created_by.name if document.created_by else None
     )
 
@@ -653,6 +698,7 @@ async def reprocess_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    lounge_image = await get_lounge_image(document, db)
     return KBDocumentResponse(
         id=document.id,
         title=document.title,
@@ -673,7 +719,9 @@ async def reprocess_document(
         category_name=document.category.name if document.category else None,
         lounge_id=document.lounge_id,
         lounge_name=document.lounge.title if document.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(document),
+        mentor_image=get_mentor_image(document),
         created_by_name=document.created_by.name if document.created_by else None
     )
 
@@ -711,8 +759,10 @@ async def list_faqs(
     )
     pages = (total + limit - 1) // limit if total > 0 else 1
 
-    items = [
-        KBFaqResponse(
+    items = []
+    for f in faqs:
+        lounge_image = await get_lounge_image(f, db)
+        items.append(KBFaqResponse(
             id=f.id,
             question=f.question,
             answer=f.answer,
@@ -730,10 +780,11 @@ async def list_faqs(
             category_name=f.category.name if f.category else None,
             lounge_id=f.lounge_id,
             lounge_name=f.lounge.title if f.lounge else None,
+            lounge_image=lounge_image,
             mentor_name=get_mentor_name(f),
+            mentor_image=get_mentor_image(f),
             created_by_name=f.created_by.name if f.created_by else None
-        ) for f in faqs
-    ]
+        ))
 
     return PaginatedFaqsResponse(
         items=items, total=total, page=page, limit=limit, pages=pages
@@ -749,6 +800,7 @@ async def create_faq(
     """Create a new KB FAQ (admin only)"""
     faq = await knowledge_base_service.create_faq(db, data.model_dump(), admin_user.id)
     db.refresh(faq)  # Refresh to get lounge relationship
+    lounge_image = await get_lounge_image(faq, db)
     return KBFaqResponse(
         id=faq.id,
         question=faq.question,
@@ -767,7 +819,9 @@ async def create_faq(
         category_name=faq.category.name if faq.category else None,
         lounge_id=faq.lounge_id,
         lounge_name=faq.lounge.title if faq.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(faq),
+        mentor_image=get_mentor_image(faq),
         created_by_name=admin_user.name
     )
 
@@ -783,6 +837,7 @@ async def get_faq(
     if not faq:
         raise HTTPException(status_code=404, detail="FAQ not found")
 
+    lounge_image = await get_lounge_image(faq, db)
     return KBFaqResponse(
         id=faq.id,
         question=faq.question,
@@ -801,7 +856,9 @@ async def get_faq(
         category_name=faq.category.name if faq.category else None,
         lounge_id=faq.lounge_id,
         lounge_name=faq.lounge.title if faq.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(faq),
+        mentor_image=get_mentor_image(faq),
         created_by_name=faq.created_by.name if faq.created_by else None
     )
 
@@ -821,6 +878,7 @@ async def update_faq(
         raise HTTPException(status_code=404, detail="FAQ not found")
 
     db.refresh(faq)  # Refresh to get lounge relationship
+    lounge_image = await get_lounge_image(faq, db)
     return KBFaqResponse(
         id=faq.id,
         question=faq.question,
@@ -839,7 +897,9 @@ async def update_faq(
         category_name=faq.category.name if faq.category else None,
         lounge_id=faq.lounge_id,
         lounge_name=faq.lounge.title if faq.lounge else None,
+        lounge_image=lounge_image,
         mentor_name=get_mentor_name(faq),
+        mentor_image=get_mentor_image(faq),
         created_by_name=faq.created_by.name if faq.created_by else None
     )
 

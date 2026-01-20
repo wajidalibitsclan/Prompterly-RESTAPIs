@@ -77,10 +77,11 @@ class NoteListResponse(BaseModel):
 
 class TimeCapsuleCreate(BaseModel):
     """Schema for creating time capsule"""
+    lounge_id: Optional[int] = None  # Optional lounge association
     title: str = Field(..., min_length=1, max_length=255)
     content: str = Field(..., min_length=1, max_length=10000)
     unlock_at: datetime
-    
+
     @validator('unlock_at')
     def validate_unlock_date(cls, v):
         # Make comparison timezone-aware
@@ -104,18 +105,20 @@ class TimeCapsuleResponse(BaseModel):
     """Schema for time capsule response"""
     id: int
     user_id: int
+    lounge_id: Optional[int] = None
+    lounge_name: Optional[str] = None
     title: str
     content: Optional[str]  # Only shown if unlocked
     unlock_at: datetime
     status: str
     created_at: datetime
     updated_at: datetime
-    
+
     # Computed fields
     is_unlocked: bool = False
     days_until_unlock: Optional[int] = None
     can_view_content: bool = False
-    
+
     class Config:
         from_attributes = True
 

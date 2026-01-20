@@ -76,6 +76,11 @@ class Lounge(Base):
         back_populates="lounge",
         cascade="all, delete-orphan"
     )
+    time_capsules = relationship(
+        "TimeCapsule",
+        back_populates="lounge",
+        cascade="all, delete-orphan"
+    )
     resources = relationship(
         "LoungeResource",
         back_populates="lounge",

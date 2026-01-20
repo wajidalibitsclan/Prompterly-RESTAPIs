@@ -64,11 +64,12 @@ class CapsuleStatus(str, Enum):
 
 class TimeCapsule(Base):
     """Time capsule model - locked messages for future"""
-    
+
     __tablename__ = "time_capsules"
-    
+
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    lounge_id = Column(Integer, ForeignKey("lounges.id"), nullable=True, index=True)  # Optional lounge association
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
     unlock_at = Column(DateTime, nullable=False)
@@ -84,9 +85,10 @@ class TimeCapsule(Base):
         onupdate=datetime.utcnow,
         nullable=False
     )
-    
+
     # Relationships
     user = relationship("User", back_populates="time_capsules")
+    lounge = relationship("Lounge", back_populates="time_capsules")
     
     @property
     def is_unlockable(self) -> bool:

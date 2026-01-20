@@ -282,18 +282,20 @@ class NoteService:
         title: str,
         content: str,
         unlock_at: datetime,
-        db: Session
+        db: Session,
+        lounge_id: Optional[int] = None
     ) -> TimeCapsule:
         """
         Create time capsule
-        
+
         Args:
             user_id: User ID
             title: Capsule title
             content: Capsule content
             unlock_at: Unlock date/time
             db: Database session
-            
+            lounge_id: Optional lounge association
+
         Returns:
             TimeCapsule instance
         """
@@ -304,21 +306,22 @@ class NoteService:
             unlock_at = unlock_at.replace(tzinfo=timezone.utc)
         if unlock_at <= now:
             raise ValueError("Unlock date must be in the future")
-        
+
         capsule = TimeCapsule(
             user_id=user_id,
+            lounge_id=lounge_id,
             title=title,
             content=content,
             unlock_at=unlock_at,
             status=CapsuleStatus.LOCKED
         )
-        
+
         db.add(capsule)
         db.commit()
         db.refresh(capsule)
-        
-        logger.info(f"Created time capsule {capsule.id} for user {user_id}")
-        
+
+        logger.info(f"Created time capsule {capsule.id} for user {user_id} in lounge {lounge_id}")
+
         return capsule
     
     async def unlock_capsules(
@@ -409,26 +412,32 @@ class NoteService:
         self,
         user_id: int,
         db: Session,
-        status: Optional[CapsuleStatus] = None
+        status: Optional[CapsuleStatus] = None,
+        lounge_id: Optional[int] = None
     ) -> List[TimeCapsule]:
         """
         Get user's time capsules
-        
+
         Args:
             user_id: User ID
             db: Database session
             status: Filter by status
-            
+            lounge_id: Filter by lounge (if provided, only returns capsules for that lounge)
+
         Returns:
             List of time capsules
         """
         query = db.query(TimeCapsule).filter(
             TimeCapsule.user_id == user_id
         )
-        
+
         if status:
             query = query.filter(TimeCapsule.status == status)
-        
+
+        # Filter by lounge_id - if provided, only return capsules for that specific lounge
+        if lounge_id is not None:
+            query = query.filter(TimeCapsule.lounge_id == lounge_id)
+
         return query.order_by(TimeCapsule.unlock_at.asc()).all()
     
     async def update_capsule(

@@ -397,30 +397,35 @@ async def get_pinned_notes(
 async def list_capsules(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
-    status: Optional[str] = None
+    status: Optional[str] = None,
+    lounge_id: Optional[int] = None
 ):
     """
     List time capsules
-    
+
     - Returns user's time capsules
     - Filter by status (locked/unlocked)
+    - Filter by lounge_id (required for lounge-specific capsules)
     """
     try:
         capsule_status = CapsuleStatus(status) if status else None
         capsules = await note_service.get_user_capsules(
             user_id=current_user.id,
             db=db,
-            status=capsule_status
+            status=capsule_status,
+            lounge_id=lounge_id
         )
-        
+
         result = []
         for capsule in capsules:
             is_unlocked = capsule.status == CapsuleStatus.UNLOCKED
             days_until = note_service.get_capsule_days_until_unlock(capsule)
-            
+
             result.append(TimeCapsuleResponse(
                 id=capsule.id,
                 user_id=capsule.user_id,
+                lounge_id=capsule.lounge_id,
+                lounge_name=capsule.lounge.title if capsule.lounge else None,
                 title=capsule.title,
                 content=capsule.content if is_unlocked else None,
                 unlock_at=capsule.unlock_at,
@@ -431,9 +436,9 @@ async def list_capsules(
                 days_until_unlock=days_until,
                 can_view_content=is_unlocked
             ))
-        
+
         return result
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -449,9 +454,10 @@ async def create_capsule(
 ):
     """
     Create time capsule
-    
+
     - Creates locked capsule for future
     - Will auto-unlock at specified date
+    - Can optionally be associated with a lounge
     """
     try:
         capsule = await note_service.create_time_capsule(
@@ -459,14 +465,17 @@ async def create_capsule(
             title=capsule_data.title,
             content=capsule_data.content,
             unlock_at=capsule_data.unlock_at,
+            lounge_id=capsule_data.lounge_id,
             db=db
         )
-        
+
         days_until = note_service.get_capsule_days_until_unlock(capsule)
-        
+
         return TimeCapsuleResponse(
             id=capsule.id,
             user_id=capsule.user_id,
+            lounge_id=capsule.lounge_id,
+            lounge_name=capsule.lounge.title if capsule.lounge else None,
             title=capsule.title,
             content=None,  # Hidden until unlocked
             unlock_at=capsule.unlock_at,
@@ -477,7 +486,7 @@ async def create_capsule(
             days_until_unlock=days_until,
             can_view_content=False
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -493,7 +502,7 @@ async def get_capsule(
 ):
     """
     Get time capsule
-    
+
     - Returns capsule details
     - Content only shown if unlocked
     """
@@ -501,19 +510,21 @@ async def get_capsule(
         TimeCapsule.id == capsule_id,
         TimeCapsule.user_id == current_user.id
     ).first()
-    
+
     if not capsule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Time capsule not found"
         )
-    
+
     is_unlocked = capsule.status == CapsuleStatus.UNLOCKED
     days_until = note_service.get_capsule_days_until_unlock(capsule)
-    
+
     return TimeCapsuleResponse(
         id=capsule.id,
         user_id=capsule.user_id,
+        lounge_id=capsule.lounge_id,
+        lounge_name=capsule.lounge.title if capsule.lounge else None,
         title=capsule.title,
         content=capsule.content if is_unlocked else None,
         unlock_at=capsule.unlock_at,
@@ -535,7 +546,7 @@ async def update_capsule(
 ):
     """
     Update time capsule
-    
+
     - Can only update locked capsules
     - Once unlocked, capsules are immutable
     """
@@ -548,12 +559,14 @@ async def update_capsule(
             content=update_data.content,
             unlock_at=update_data.unlock_at
         )
-        
+
         days_until = note_service.get_capsule_days_until_unlock(capsule)
-        
+
         return TimeCapsuleResponse(
             id=capsule.id,
             user_id=capsule.user_id,
+            lounge_id=capsule.lounge_id,
+            lounge_name=capsule.lounge.title if capsule.lounge else None,
             title=capsule.title,
             content=None,
             unlock_at=capsule.unlock_at,
@@ -564,7 +577,7 @@ async def update_capsule(
             days_until_unlock=days_until,
             can_view_content=False
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -621,6 +634,8 @@ async def unlock_capsule(
         return TimeCapsuleResponse(
             id=capsule.id,
             user_id=capsule.user_id,
+            lounge_id=capsule.lounge_id,
+            lounge_name=capsule.lounge.title if capsule.lounge else None,
             title=capsule.title,
             content=capsule.content,
             unlock_at=capsule.unlock_at,
