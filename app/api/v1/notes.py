@@ -397,22 +397,22 @@ async def get_pinned_notes(
 async def list_capsules(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
-    status: Optional[str] = None,
-    lounge_id: Optional[int] = None
+    capsule_status: Optional[str] = Query(None, alias="status", description="Filter by status (locked/unlocked)"),
+    lounge_id: Optional[int] = Query(None, description="Filter by lounge ID")
 ):
     """
     List time capsules
 
-    - Returns user's time capsules
+    - Returns user's time capsules (only capsules created by this user)
     - Filter by status (locked/unlocked)
-    - Filter by lounge_id (required for lounge-specific capsules)
+    - Filter by lounge_id to see capsules for a specific lounge
     """
     try:
-        capsule_status = CapsuleStatus(status) if status else None
+        filter_status = CapsuleStatus(capsule_status) if capsule_status else None
         capsules = await note_service.get_user_capsules(
             user_id=current_user.id,
             db=db,
-            status=capsule_status,
+            status=filter_status,
             lounge_id=lounge_id
         )
 
