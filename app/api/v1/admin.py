@@ -16,7 +16,7 @@ from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
 from app.db.models.lounge import Lounge, LoungeMembership, AccessType
 from app.db.models.mentor import Category
-from app.db.models.billing import Subscription, Payment, SubscriptionStatus, LoungeSubscription, PaymentStatus
+from app.db.models.billing import Subscription, Payment, SubscriptionStatus, LoungeSubscription, PaymentStatus, LoungePlanType
 from app.db.models.note import Note
 from app.db.models.lounge_resource import LoungeResource
 from app.db.models.file import File as FileModel
@@ -89,10 +89,26 @@ async def get_system_stats(
         Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING])
     ).scalar()
     
-    # Revenue
-    total_revenue = db.query(func.sum(Payment.amount_cents)).filter(
+    # Revenue from payments
+    payment_revenue = db.query(func.sum(Payment.amount_cents)).filter(
         Payment.status == PaymentStatus.SUCCEEDED
     ).scalar() or 0
+
+    # Revenue from active lounge subscriptions
+    # Count by plan type and multiply by fixed prices: monthly = $25 (2500 cents), yearly = $240 (24000 cents)
+    monthly_sub_count = db.query(func.count(LoungeSubscription.id)).filter(
+        LoungeSubscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]),
+        LoungeSubscription.plan_type == LoungePlanType.MONTHLY
+    ).scalar() or 0
+
+    yearly_sub_count = db.query(func.count(LoungeSubscription.id)).filter(
+        LoungeSubscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]),
+        LoungeSubscription.plan_type == LoungePlanType.YEARLY
+    ).scalar() or 0
+
+    lounge_subscription_revenue = (monthly_sub_count * 2500) + (yearly_sub_count * 24000)
+
+    total_revenue = payment_revenue + lounge_subscription_revenue
     
     # Active users (last 30 days)
     thirty_days_ago = datetime.utcnow() - timedelta(days=30)
