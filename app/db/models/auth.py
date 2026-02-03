@@ -3,9 +3,9 @@ OAuth and Session models
 """
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SQLEnum, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class OAuthProvider(str, Enum):
@@ -24,11 +24,11 @@ class OAuthAccount(Base):
     provider_user_id = Column(String(255), nullable=False)
     access_token = Column(Text, nullable=True)
     refresh_token = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     updated_at = Column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_naive,
+        onupdate=now_naive,
         nullable=False
     )
     
@@ -49,7 +49,7 @@ class UserSession(Base):
     ip_address = Column(String(45), nullable=True)  # IPv6 compatible
     user_agent = Column(String(500), nullable=True)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     revoked_at = Column(DateTime, nullable=True)
     
     # Relationships
@@ -60,7 +60,7 @@ class UserSession(Base):
         """Check if session is active"""
         if self.revoked_at:
             return False
-        return datetime.utcnow() < self.expires_at
+        return now_naive() < self.expires_at
     
     def __repr__(self):
         return f"<UserSession(id={self.id}, user_id={self.user_id}, active={self.is_active})>"
@@ -77,14 +77,14 @@ class EmailOTP(Base):
     purpose = Column(String(50), nullable=False, default="registration")  # registration, password_reset, etc.
     expires_at = Column(DateTime, nullable=False)
     verified_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
 
     @property
     def is_valid(self) -> bool:
         """Check if OTP is still valid"""
         if self.verified_at:
             return False
-        return datetime.utcnow() < self.expires_at
+        return now_naive() < self.expires_at
 
     def __repr__(self):
         return f"<EmailOTP(id={self.id}, email={self.email}, valid={self.is_valid})>"

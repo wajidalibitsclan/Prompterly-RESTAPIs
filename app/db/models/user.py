@@ -3,9 +3,9 @@ User model - Core user entity
 """
 from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class UserRole(str, Enum):
@@ -32,11 +32,11 @@ class User(Base):
         nullable=False
     )
     email_verified_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     updated_at = Column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_naive,
+        onupdate=now_naive,
         nullable=False
     )
     

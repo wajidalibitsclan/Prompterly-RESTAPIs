@@ -160,6 +160,27 @@ class CreateMentorRequest(BaseModel):
     intro_video_url: Optional[str] = None
     experience_years: int = 0
     status: str = "pending"
+    # Mentor profile fields for "More from Mentor" modal
+    mentor_title: Optional[str] = None
+    philosophy: Optional[str] = None
+    hobbies: Optional[str] = None
+    # Social links
+    social_instagram: Optional[str] = None
+    social_tiktok: Optional[str] = None
+    social_linkedin: Optional[str] = None
+    social_youtube: Optional[str] = None
+    # Book recommendation
+    book_title: Optional[str] = None
+    book_description: Optional[str] = None
+    # Podcast recommendation
+    podcast_rec_title: Optional[str] = None
+    # Podcast links
+    podcast_name: Optional[str] = None
+    podcast_youtube: Optional[str] = None
+    podcast_spotify: Optional[str] = None
+    podcast_apple: Optional[str] = None
+    # Quick prompts
+    quick_prompts: Optional[str] = None
 
 
 class UpdateMentorRequest(BaseModel):
@@ -169,6 +190,27 @@ class UpdateMentorRequest(BaseModel):
     intro_video_url: Optional[str] = None
     experience_years: Optional[int] = None
     status: Optional[str] = None
+    # Mentor profile fields for "More from Mentor" modal
+    mentor_title: Optional[str] = None
+    philosophy: Optional[str] = None
+    hobbies: Optional[str] = None
+    # Social links
+    social_instagram: Optional[str] = None
+    social_tiktok: Optional[str] = None
+    social_linkedin: Optional[str] = None
+    social_youtube: Optional[str] = None
+    # Book recommendation
+    book_title: Optional[str] = None
+    book_description: Optional[str] = None
+    # Podcast recommendation
+    podcast_rec_title: Optional[str] = None
+    # Podcast links
+    podcast_name: Optional[str] = None
+    podcast_youtube: Optional[str] = None
+    podcast_spotify: Optional[str] = None
+    podcast_apple: Optional[str] = None
+    # Quick prompts
+    quick_prompts: Optional[str] = None
 
 
 class MentorDetailResponse(BaseModel):
@@ -186,6 +228,27 @@ class MentorDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     lounge_count: int = 0
+    # Mentor profile fields for "More from Mentor" modal
+    mentor_title: Optional[str] = None
+    philosophy: Optional[str] = None
+    hobbies: Optional[str] = None
+    # Social links
+    social_instagram: Optional[str] = None
+    social_tiktok: Optional[str] = None
+    social_linkedin: Optional[str] = None
+    social_youtube: Optional[str] = None
+    # Book recommendation
+    book_title: Optional[str] = None
+    book_description: Optional[str] = None
+    # Podcast recommendation
+    podcast_rec_title: Optional[str] = None
+    # Podcast links
+    podcast_name: Optional[str] = None
+    podcast_youtube: Optional[str] = None
+    podcast_spotify: Optional[str] = None
+    podcast_apple: Optional[str] = None
+    # Quick prompts
+    quick_prompts: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -252,3 +315,39 @@ class PaginatedSubscriptionsResponse(BaseModel):
     page: int
     limit: int
     pages: int
+
+
+# =============================================================================
+# Contact Message Management Schemas
+# =============================================================================
+
+class ContactMessageResponse(BaseModel):
+    """Schema for contact message in admin panel"""
+    id: int
+    name: str
+    email: str
+    subject: str
+    message: str
+    status: str
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: datetime
+    read_at: Optional[datetime] = None
+    replied_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PaginatedContactMessagesResponse(BaseModel):
+    """Paginated response for contact messages list"""
+    items: List[ContactMessageResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
+class UpdateContactMessageStatusRequest(BaseModel):
+    """Request to update contact message status"""
+    status: str  # 'new', 'read', 'replied', 'archived'

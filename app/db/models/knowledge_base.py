@@ -4,8 +4,8 @@ Supports RAG (Retrieval Augmented Generation) with embeddings
 """
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, BigInteger, JSON
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class KBCategory(Base):
@@ -22,8 +22,8 @@ class KBCategory(Base):
     icon = Column(String(100), nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+    updated_at = Column(DateTime, default=now_naive, onupdate=now_naive, nullable=False)
 
     # Relationships
     lounge = relationship("Lounge")
@@ -56,8 +56,8 @@ class KBPrompt(Base):
     embedding = Column(JSON, nullable=True)
     embedding_model = Column(String(100), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+    updated_at = Column(DateTime, default=now_naive, onupdate=now_naive, nullable=False)
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
@@ -104,8 +104,8 @@ class KBDocument(Base):
     embedding = Column(JSON, nullable=True)
     embedding_model = Column(String(100), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+    updated_at = Column(DateTime, default=now_naive, onupdate=now_naive, nullable=False)
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
@@ -147,7 +147,7 @@ class KBDocumentChunk(Base):
     embedding = Column(JSON, nullable=True)
     embedding_model = Column(String(100), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
 
     # Relationships
     document = relationship("KBDocument", back_populates="chunks")
@@ -186,8 +186,8 @@ class KBFaq(Base):
     embedding = Column(JSON, nullable=True)
     embedding_model = Column(String(100), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+    updated_at = Column(DateTime, default=now_naive, onupdate=now_naive, nullable=False)
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships

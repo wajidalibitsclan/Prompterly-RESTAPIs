@@ -9,12 +9,12 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile
 from typing import Optional
 import logging
-from datetime import datetime
 import mimetypes
 import uuid
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.timezone import now_naive
 from app.db.models.file import File
 from sqlalchemy.orm import Session
 
@@ -90,7 +90,7 @@ class FileService:
 
             # Generate unique filename
             unique_filename = f"{uuid.uuid4()}_{file.filename}"
-            date_path = datetime.utcnow().strftime('%Y/%m/%d')
+            date_path = now_naive().strftime('%Y/%m/%d')
             storage_path = f"{folder}/{date_path}/{unique_filename}"
 
             # Determine content type
@@ -385,6 +385,75 @@ class FileService:
             return 'document'
         else:
             return 'other'
+
+    async def upload_export_file(
+        self,
+        content: bytes,
+        filename: str,
+        content_type: str = "text/csv"
+    ) -> str:
+        """
+        Upload export file (CSV, etc.) to storage and return download URL.
+        Does not create a database record - used for temporary exports.
+
+        Args:
+            content: File content as bytes
+            filename: Filename for the export
+            content_type: MIME type of the file
+
+        Returns:
+            Download URL string
+
+        Raises:
+            Exception: If upload fails
+        """
+        try:
+            # Generate storage path
+            date_path = now_naive().strftime('%Y/%m/%d')
+            storage_path = f"exports/{date_path}/{filename}"
+
+            if self.storage_type == "s3":
+                # Upload to S3
+                self.s3_client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=storage_path,
+                    Body=content,
+                    ContentType=content_type,
+                    ContentDisposition=f'attachment; filename="{filename}"'
+                )
+
+                # Generate presigned URL for download (valid for 1 hour)
+                url = self.s3_client.generate_presigned_url(
+                    'get_object',
+                    Params={
+                        'Bucket': self.bucket_name,
+                        'Key': storage_path
+                    },
+                    ExpiresIn=3600
+                )
+            else:
+                # Upload to local storage
+                full_path = self.local_storage_path / storage_path
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+
+                with open(full_path, 'wb') as f:
+                    f.write(content)
+
+                logger.info(f"Export file saved locally: {full_path}")
+
+                # Return URL for local file
+                base_url = settings.BASE_URL.rstrip('/')
+                url = f"{base_url}/files/{storage_path}"
+
+            logger.info(f"Export file uploaded: {storage_path}")
+            return url
+
+        except ClientError as e:
+            logger.error(f"S3 upload error for export: {str(e)}")
+            raise Exception(f"Failed to upload export file: {str(e)}")
+        except Exception as e:
+            logger.error(f"Export file upload error: {str(e)}")
+            raise
 
 
 # Singleton instance

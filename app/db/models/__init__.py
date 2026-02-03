@@ -55,6 +55,10 @@ from app.db.models.background_job import (
     JobStatus,
     JobType
 )
+from app.db.models.newsletter import (
+    NewsletterSubscriber,
+    SubscriberStatus
+)
 
 __all__ = [
     # User models
@@ -127,4 +131,8 @@ __all__ = [
     "BackgroundJob",
     "JobStatus",
     "JobType",
+
+    # Newsletter models
+    "NewsletterSubscriber",
+    "SubscriberStatus",
 ]

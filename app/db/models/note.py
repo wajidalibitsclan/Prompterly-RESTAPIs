@@ -6,9 +6,9 @@ from sqlalchemy import (
     Text, Boolean, DateTime, Enum as SQLEnum, JSON
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class Note(Base):
@@ -25,11 +25,11 @@ class Note(Base):
     is_pinned = Column(Boolean, default=False, nullable=False)
     is_included_in_rag = Column(Boolean, default=False, nullable=False)
     tags = Column(JSON, nullable=True)  # Array of tags
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     updated_at = Column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_naive,
+        onupdate=now_naive,
         nullable=False
     )
 
@@ -78,11 +78,11 @@ class TimeCapsule(Base):
         default=CapsuleStatus.LOCKED,
         nullable=False
     )
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     updated_at = Column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_naive,
+        onupdate=now_naive,
         nullable=False
     )
 
@@ -95,7 +95,7 @@ class TimeCapsule(Base):
         """Check if capsule can be unlocked"""
         return (
             self.status == CapsuleStatus.LOCKED and
-            datetime.utcnow() >= self.unlock_at
+            now_naive() >= self.unlock_at
         )
     
     @property
@@ -103,7 +103,7 @@ class TimeCapsule(Base):
         """Get days until unlock"""
         if self.status != CapsuleStatus.LOCKED:
             return 0
-        delta = self.unlock_at - datetime.utcnow()
+        delta = self.unlock_at - now_naive()
         return max(0, delta.days)
     
     def __repr__(self):

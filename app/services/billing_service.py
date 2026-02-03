@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 import logging
 
 from app.core.config import settings
+from app.core.timezone import now_naive
 from app.db.models.billing import (
     SubscriptionPlan,
     Subscription,
@@ -381,7 +382,7 @@ class BillingService:
             # Update database
             if immediate:
                 subscription.status = SubscriptionStatus.CANCELED
-                subscription.canceled_at = datetime.utcnow()
+                subscription.canceled_at = now_naive()
             else:
                 # Will cancel at period end
                 subscription.canceled_at = subscription.renews_at
@@ -733,12 +734,12 @@ class BillingService:
             # If still not found, use current time as fallback
             if not current_period_start:
                 logger.warning("Could not find period dates, using current time")
-                current_period_start = datetime.utcnow().timestamp()
+                current_period_start = now_naive().timestamp()
                 # Default to 1 month or 1 year based on plan
                 if plan_type == LoungePlanType.YEARLY:
-                    current_period_end = (datetime.utcnow() + timedelta(days=365)).timestamp()
+                    current_period_end = (now_naive() + timedelta(days=365)).timestamp()
                 else:
-                    current_period_end = (datetime.utcnow() + timedelta(days=30)).timestamp()
+                    current_period_end = (now_naive() + timedelta(days=30)).timestamp()
 
             logger.info(f"Period: start={current_period_start}, end={current_period_end}")
 
@@ -849,7 +850,7 @@ class BillingService:
                 ).first()
 
                 if membership:
-                    membership.left_at = datetime.utcnow()
+                    membership.left_at = now_naive()
                     db.commit()
                     logger.info(f"Removed user {lounge_sub.user_id} from lounge {lounge_sub.lounge_id} due to canceled subscription")
 
@@ -906,7 +907,7 @@ class BillingService:
             # Update database
             if immediate:
                 subscription.status = SubscriptionStatus.CANCELED
-                subscription.canceled_at = datetime.utcnow()
+                subscription.canceled_at = now_naive()
 
                 # Remove membership immediately
                 membership = db.query(LoungeMembership).filter(
@@ -916,7 +917,7 @@ class BillingService:
                 ).first()
 
                 if membership:
-                    membership.left_at = datetime.utcnow()
+                    membership.left_at = now_naive()
             else:
                 # Will cancel at period end
                 subscription.canceled_at = subscription.renews_at
@@ -1082,7 +1083,7 @@ class BillingService:
                 proration_behavior='create_prorations' if prorate else 'none',
                 metadata={
                     'upgraded_from': 'monthly',
-                    'upgraded_at': datetime.utcnow().isoformat()
+                    'upgraded_at': now_naive().isoformat()
                 }
             )
 

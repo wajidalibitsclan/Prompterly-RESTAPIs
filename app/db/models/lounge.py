@@ -2,13 +2,13 @@
 Lounge and LoungeMembership models
 """
 from sqlalchemy import (
-    Column, Integer, String, ForeignKey, 
+    Column, Integer, String, ForeignKey,
     Enum as SQLEnum, Text, Boolean, DateTime
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class AccessType(str, Enum):
@@ -44,7 +44,9 @@ class Lounge(Base):
     max_members = Column(Integer, nullable=True)
     is_public_listing = Column(Boolean, default=True, nullable=False)
     profile_image_id = Column(Integer, ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    about = Column(Text, nullable=True)  # Bullet points about the lounge (stored as JSON array)
+    brand_color = Column(String(7), nullable=True, default="#9ECCF2")  # Hex color code for lounge card
+    created_at = Column(DateTime, default=now_naive, nullable=False)
 
     # Stripe subscription fields for paid lounges
     stripe_product_id = Column(String(255), nullable=True, index=True)
@@ -116,7 +118,7 @@ class LoungeMembership(Base):
         default=MembershipRole.MEMBER,
         nullable=False
     )
-    joined_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    joined_at = Column(DateTime, default=now_naive, nullable=False)
     left_at = Column(DateTime, nullable=True)
     
     # Relationships

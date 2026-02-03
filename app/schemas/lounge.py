@@ -17,17 +17,25 @@ class LoungeCreate(BaseModel):
     plan_id: Optional[int] = None
     max_members: Optional[int] = Field(None, ge=1, le=10000)
     is_public_listing: bool = True
-    
+    about: Optional[str] = None  # JSON array of bullet points
+    brand_color: Optional[str] = Field(None, max_length=7)  # Hex color code
+
     @validator('slug')
     def validate_slug(cls, v):
         if not v.replace('-', '').replace('_', '').isalnum():
             raise ValueError('Slug must contain only letters, numbers, hyphens, and underscores')
         return v.lower()
-    
+
     @validator('plan_id')
     def validate_plan(cls, v, values):
         if values.get('access_type') == AccessType.PAID and not v:
             raise ValueError('plan_id is required for paid lounges')
+        return v
+
+    @validator('brand_color')
+    def validate_brand_color(cls, v):
+        if v and not v.startswith('#'):
+            raise ValueError('Brand color must be a valid hex color code starting with #')
         return v
 
 
@@ -40,6 +48,14 @@ class LoungeUpdate(BaseModel):
     plan_id: Optional[int] = None
     max_members: Optional[int] = Field(None, ge=1, le=10000)
     is_public_listing: Optional[bool] = None
+    about: Optional[str] = None  # JSON array of bullet points
+    brand_color: Optional[str] = Field(None, max_length=7)  # Hex color code
+
+    @validator('brand_color')
+    def validate_brand_color(cls, v):
+        if v and not v.startswith('#'):
+            raise ValueError('Brand color must be a valid hex color code starting with #')
+        return v
 
 
 class LoungeResponse(BaseModel):
@@ -55,6 +71,8 @@ class LoungeResponse(BaseModel):
     max_members: Optional[int]
     is_public_listing: bool
     profile_image_url: Optional[str] = None
+    about: Optional[str] = None  # JSON array of bullet points
+    brand_color: Optional[str] = None  # Hex color code
     created_at: datetime
 
     # Stripe pricing for paid lounges
@@ -88,6 +106,8 @@ class LoungeListResponse(BaseModel):
     category_id: Optional[int] = None
     access_type: AccessType
     profile_image_url: Optional[str] = None
+    about: Optional[str] = None  # JSON array of bullet points
+    brand_color: Optional[str] = None  # Hex color code
     created_at: datetime
 
     mentor_name: Optional[str]

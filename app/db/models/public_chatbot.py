@@ -2,8 +2,8 @@
 Public Chatbot Configuration model
 """
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, JSON
-from datetime import datetime
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class PublicChatbotConfig(Base):
@@ -41,8 +41,8 @@ class PublicChatbotConfig(Base):
     rag_similarity_threshold = Column(Integer, default=70, nullable=False)  # 0-100 percentage
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+    updated_at = Column(DateTime, default=now_naive, onupdate=now_naive, nullable=False)
 
     def __repr__(self):
         return f"<PublicChatbotConfig(id={self.id}, name={self.name}, enabled={self.is_enabled})>"
@@ -63,7 +63,7 @@ class PublicChatMessage(Base):
     content = Column(Text, nullable=False)
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
 
     def __repr__(self):
         return f"<PublicChatMessage(id={self.id}, session={self.session_id}, role={self.role})>"

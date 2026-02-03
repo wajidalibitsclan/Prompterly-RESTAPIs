@@ -1,14 +1,15 @@
 """
 Chat models - Thread and Message
 """
+from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, ForeignKey,
     Enum as SQLEnum, Text, DateTime, JSON
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class ThreadStatus(str, Enum):
@@ -38,7 +39,7 @@ class ChatThread(Base):
         default=ThreadStatus.OPEN,
         nullable=False
     )
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="chat_threads")
@@ -82,7 +83,7 @@ class ChatMessage(Base):
     reply_to_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True)  # Reply to another message
     content = Column(Text, nullable=False)
     message_metadata = Column(JSON, nullable=True)  # For AI model info, tokens, etc. (renamed from metadata)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     edited_at = Column(DateTime, nullable=True)  # Timestamp when message was edited
 
     # Relationships

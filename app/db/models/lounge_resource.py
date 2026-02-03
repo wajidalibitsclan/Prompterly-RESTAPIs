@@ -3,8 +3,8 @@ LoungeResource model - stores documents/resources for lounges
 """
 from sqlalchemy import Column, Integer, String, ForeignKey, Text, DateTime
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class LoungeResource(Base):
@@ -18,8 +18,8 @@ class LoungeResource(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+    updated_at = Column(DateTime, default=now_naive, onupdate=now_naive, nullable=False)
 
     # Relationships
     lounge = relationship("Lounge", back_populates="resources")

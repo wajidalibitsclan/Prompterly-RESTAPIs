@@ -36,13 +36,29 @@ class PublicChatbotService:
         """Update or create chatbot configuration with embedding generation"""
         config = await self.get_config(db)
 
+        # Filter out empty strings for required fields (let DB defaults apply)
+        required_fields_with_defaults = {'name', 'welcome_message', 'input_placeholder'}
+        # Nullable fields should convert empty string to None
+        nullable_fields = {'system_prompt', 'header_subtitle', 'avatar_url'}
+
+        filtered_data = {}
+        for k, v in data.items():
+            if k in required_fields_with_defaults and v == '':
+                # Skip empty required fields to use DB defaults
+                continue
+            elif k in nullable_fields and v == '':
+                # Convert empty strings to None for nullable fields
+                filtered_data[k] = None
+            else:
+                filtered_data[k] = v
+
         if not config:
-            # Create new config
-            config = PublicChatbotConfig(**data)
+            # Create new config with filtered data
+            config = PublicChatbotConfig(**filtered_data)
             db.add(config)
         else:
             # Update existing config
-            for key, value in data.items():
+            for key, value in filtered_data.items():
                 if value is not None and hasattr(config, key):
                     setattr(config, key, value)
 

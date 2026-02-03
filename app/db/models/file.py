@@ -3,8 +3,8 @@ File and MessageAttachment models
 """
 from sqlalchemy import Column, Integer, String, ForeignKey, BigInteger, DateTime
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class File(Base):
@@ -17,7 +17,7 @@ class File(Base):
     storage_path = Column(String(500), nullable=False)  # S3 key or path
     mime_type = Column(String(100), nullable=False)
     size_bytes = Column(BigInteger, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     
     # Relationships
     owner = relationship(

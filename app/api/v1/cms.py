@@ -5,9 +5,9 @@ Handles static pages and FAQs
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.jwt import get_current_active_user, get_current_admin
 from app.db.models.user import User
 from app.db.models.misc import StaticPage, FAQ
@@ -137,7 +137,7 @@ async def update_page(
     if update_data.is_published is not None:
         page.is_published = update_data.is_published
     
-    page.updated_at = datetime.utcnow()
+    page.updated_at = now_naive()
     
     db.commit()
     db.refresh(page)

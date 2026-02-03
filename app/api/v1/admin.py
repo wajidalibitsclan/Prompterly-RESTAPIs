@@ -11,6 +11,7 @@ import psutil
 import time
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.jwt import get_current_admin
 from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
@@ -19,6 +20,8 @@ from app.db.models.mentor import Category
 from app.db.models.billing import Subscription, Payment, SubscriptionStatus, LoungeSubscription, PaymentStatus, LoungePlanType
 from app.db.models.note import Note
 from app.db.models.lounge_resource import LoungeResource
+from app.db.models.newsletter import NewsletterSubscriber, SubscriberStatus
+from app.db.models.misc import ContactMessage, ContactMessageStatus
 from app.db.models.file import File as FileModel
 from app.db.models.chat import ChatMessage
 from app.schemas.admin import (
@@ -35,7 +38,10 @@ from app.schemas.admin import (
     UpdateMentorRequest,
     LoungeInfo,
     UserSubscriptionResponse,
-    PaginatedSubscriptionsResponse
+    PaginatedSubscriptionsResponse,
+    ContactMessageResponse,
+    PaginatedContactMessagesResponse,
+    UpdateContactMessageStatusRequest
 )
 from app.core.security import hash_password
 from app.services.file_service import file_service
@@ -111,13 +117,13 @@ async def get_system_stats(
     total_revenue = payment_revenue + lounge_subscription_revenue
     
     # Active users (last 30 days)
-    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    thirty_days_ago = now_naive() - timedelta(days=30)
     active_users = db.query(func.count(func.distinct(ChatMessage.user_id))).filter(
         ChatMessage.created_at >= thirty_days_ago
     ).scalar()
     
     # New users (last 7 days)
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    seven_days_ago = now_naive() - timedelta(days=7)
     new_users = db.query(func.count(User.id)).filter(
         User.created_at >= seven_days_ago
     ).scalar()
@@ -348,7 +354,7 @@ async def get_user_activity(
     - Requires admin role
     - Shows most active users
     """
-    since_date = datetime.utcnow() - timedelta(days=days)
+    since_date = now_naive() - timedelta(days=days)
     
     # Get users with recent activity
     active_users = db.query(
@@ -414,7 +420,7 @@ async def get_revenue_report(
     
     for i in range(months):
         # Calculate month start/end
-        end_date = datetime.utcnow() - timedelta(days=i*30)
+        end_date = now_naive() - timedelta(days=i*30)
         start_date = end_date - timedelta(days=30)
         
         # Revenue
@@ -540,7 +546,7 @@ async def export_users(
         csv_data += f"{user.id},{user.email},{user.name},{user.role.value},{user.created_at},{user.email_verified_at is not None}\n"
     
     return {
-        "filename": f"users_export_{datetime.utcnow().strftime('%Y%m%d')}.csv",
+        "filename": f"users_export_{now_naive().strftime('%Y%m%d')}.csv",
         "data": csv_data
     }
 
@@ -587,6 +593,8 @@ async def get_admin_lounges(
             "mentor_id": lounge.mentor_id,
             "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
             "profile_image_url": profile_image_url,
+            "about": lounge.about,
+            "brand_color": lounge.brand_color,
             "member_count": member_count,
             "is_full": lounge.is_full,
             "created_at": lounge.created_at
@@ -632,6 +640,8 @@ async def get_admin_lounge(
         "mentor_id": lounge.mentor_id,
         "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
         "profile_image_url": profile_image_url,
+        "about": lounge.about,
+        "brand_color": lounge.brand_color,
         "member_count": member_count,
         "is_full": lounge.is_full,
         "created_at": lounge.created_at
@@ -648,6 +658,8 @@ async def admin_create_lounge(
     access_type: str = "free",
     max_members: Optional[int] = None,
     is_public_listing: bool = True,
+    about: Optional[str] = None,
+    brand_color: Optional[str] = None,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
@@ -699,7 +711,9 @@ async def admin_create_lounge(
         category_id=category_id,
         access_type=access_type_enum,
         max_members=max_members,
-        is_public_listing=is_public_listing
+        is_public_listing=is_public_listing,
+        about=about,
+        brand_color=brand_color or "#9ECCF2"
     )
 
     db.add(lounge)
@@ -831,6 +845,8 @@ async def admin_update_lounge(
     access_type: Optional[str] = None,
     max_members: Optional[int] = None,
     is_public_listing: Optional[bool] = None,
+    about: Optional[str] = None,
+    brand_color: Optional[str] = None,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
@@ -900,6 +916,12 @@ async def admin_update_lounge(
     if is_public_listing is not None:
         lounge.is_public_listing = is_public_listing
 
+    if about is not None:
+        lounge.about = about
+
+    if brand_color is not None:
+        lounge.brand_color = brand_color
+
     db.commit()
     db.refresh(lounge)
 
@@ -923,6 +945,8 @@ async def admin_update_lounge(
         "mentor_id": lounge.mentor_id,
         "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
         "profile_image_url": profile_image_url,
+        "about": lounge.about,
+        "brand_color": lounge.brand_color,
         "member_count": member_count,
         "is_full": lounge.is_full,
         "created_at": lounge.created_at
@@ -998,7 +1022,7 @@ async def create_user(
         password_hash=hash_password(user_data.password),
         name=user_data.name,
         role=role,
-        email_verified_at=datetime.utcnow() if user_data.email_verified else None
+        email_verified_at=now_naive() if user_data.email_verified else None
     )
 
     db.add(user)
@@ -1116,7 +1140,7 @@ async def update_user(
             )
 
     if user_data.email_verified is not None:
-        user.email_verified_at = datetime.utcnow() if user_data.email_verified else None
+        user.email_verified_at = now_naive() if user_data.email_verified else None
 
     if user_data.avatar_url is not None:
         user.avatar_url = user_data.avatar_url
@@ -1189,7 +1213,7 @@ async def upload_user_avatar(
 
         # Update user's avatar_url
         user.avatar_url = avatar_url
-        user.updated_at = datetime.utcnow()
+        user.updated_at = now_naive()
 
         db.commit()
         db.refresh(user)
@@ -1256,7 +1280,23 @@ async def get_mentor(
         "status": mentor.status.value,
         "created_at": mentor.created_at,
         "updated_at": mentor.updated_at,
-        "lounge_count": lounge_count
+        "lounge_count": lounge_count,
+        # Mentor profile fields for "More from Mentor" modal
+        "mentor_title": mentor.mentor_title,
+        "philosophy": mentor.philosophy,
+        "hobbies": mentor.hobbies,
+        "social_instagram": mentor.social_instagram,
+        "social_tiktok": mentor.social_tiktok,
+        "social_linkedin": mentor.social_linkedin,
+        "social_youtube": mentor.social_youtube,
+        "book_title": mentor.book_title,
+        "book_description": mentor.book_description,
+        "podcast_rec_title": mentor.podcast_rec_title,
+        "podcast_name": mentor.podcast_name,
+        "podcast_youtube": mentor.podcast_youtube,
+        "podcast_spotify": mentor.podcast_spotify,
+        "podcast_apple": mentor.podcast_apple,
+        "quick_prompts": mentor.quick_prompts
     }
 
 
@@ -1310,7 +1350,28 @@ async def create_mentor(
         bio=mentor_data.bio,
         intro_video_url=mentor_data.intro_video_url,
         experience_years=mentor_data.experience_years,
-        status=status_enum
+        status=status_enum,
+        # Mentor profile fields for "More from Mentor" modal
+        mentor_title=mentor_data.mentor_title,
+        philosophy=mentor_data.philosophy,
+        hobbies=mentor_data.hobbies,
+        # Social links
+        social_instagram=mentor_data.social_instagram,
+        social_tiktok=mentor_data.social_tiktok,
+        social_linkedin=mentor_data.social_linkedin,
+        social_youtube=mentor_data.social_youtube,
+        # Book recommendation
+        book_title=mentor_data.book_title,
+        book_description=mentor_data.book_description,
+        # Podcast recommendation
+        podcast_rec_title=mentor_data.podcast_rec_title,
+        # Podcast links
+        podcast_name=mentor_data.podcast_name,
+        podcast_youtube=mentor_data.podcast_youtube,
+        podcast_spotify=mentor_data.podcast_spotify,
+        podcast_apple=mentor_data.podcast_apple,
+        # Quick prompts
+        quick_prompts=mentor_data.quick_prompts
     )
 
     db.add(mentor)
@@ -1334,7 +1395,23 @@ async def create_mentor(
         "intro_video_url": mentor.intro_video_url,
         "experience_years": mentor.experience_years,
         "status": mentor.status.value,
-        "created_at": mentor.created_at
+        "created_at": mentor.created_at,
+        # Mentor profile fields
+        "mentor_title": mentor.mentor_title,
+        "philosophy": mentor.philosophy,
+        "hobbies": mentor.hobbies,
+        "social_instagram": mentor.social_instagram,
+        "social_tiktok": mentor.social_tiktok,
+        "social_linkedin": mentor.social_linkedin,
+        "social_youtube": mentor.social_youtube,
+        "book_title": mentor.book_title,
+        "book_description": mentor.book_description,
+        "podcast_rec_title": mentor.podcast_rec_title,
+        "podcast_name": mentor.podcast_name,
+        "podcast_youtube": mentor.podcast_youtube,
+        "podcast_spotify": mentor.podcast_spotify,
+        "podcast_apple": mentor.podcast_apple,
+        "quick_prompts": mentor.quick_prompts
     }
 
 
@@ -1380,6 +1457,43 @@ async def update_mentor(
                 detail=f"Invalid status: {mentor_data.status}"
             )
 
+    # Update mentor profile fields for "More from Mentor" modal
+    if mentor_data.mentor_title is not None:
+        mentor.mentor_title = mentor_data.mentor_title
+    if mentor_data.philosophy is not None:
+        mentor.philosophy = mentor_data.philosophy
+    if mentor_data.hobbies is not None:
+        mentor.hobbies = mentor_data.hobbies
+    # Social links
+    if mentor_data.social_instagram is not None:
+        mentor.social_instagram = mentor_data.social_instagram
+    if mentor_data.social_tiktok is not None:
+        mentor.social_tiktok = mentor_data.social_tiktok
+    if mentor_data.social_linkedin is not None:
+        mentor.social_linkedin = mentor_data.social_linkedin
+    if mentor_data.social_youtube is not None:
+        mentor.social_youtube = mentor_data.social_youtube
+    # Book recommendation
+    if mentor_data.book_title is not None:
+        mentor.book_title = mentor_data.book_title
+    if mentor_data.book_description is not None:
+        mentor.book_description = mentor_data.book_description
+    # Podcast recommendation
+    if mentor_data.podcast_rec_title is not None:
+        mentor.podcast_rec_title = mentor_data.podcast_rec_title
+    # Podcast links
+    if mentor_data.podcast_name is not None:
+        mentor.podcast_name = mentor_data.podcast_name
+    if mentor_data.podcast_youtube is not None:
+        mentor.podcast_youtube = mentor_data.podcast_youtube
+    if mentor_data.podcast_spotify is not None:
+        mentor.podcast_spotify = mentor_data.podcast_spotify
+    if mentor_data.podcast_apple is not None:
+        mentor.podcast_apple = mentor_data.podcast_apple
+    # Quick prompts
+    if mentor_data.quick_prompts is not None:
+        mentor.quick_prompts = mentor_data.quick_prompts
+
     db.commit()
     db.refresh(mentor)
 
@@ -1394,7 +1508,23 @@ async def update_mentor(
         "experience_years": mentor.experience_years,
         "status": mentor.status.value,
         "created_at": mentor.created_at,
-        "updated_at": mentor.updated_at
+        "updated_at": mentor.updated_at,
+        # Mentor profile fields
+        "mentor_title": mentor.mentor_title,
+        "philosophy": mentor.philosophy,
+        "hobbies": mentor.hobbies,
+        "social_instagram": mentor.social_instagram,
+        "social_tiktok": mentor.social_tiktok,
+        "social_linkedin": mentor.social_linkedin,
+        "social_youtube": mentor.social_youtube,
+        "book_title": mentor.book_title,
+        "book_description": mentor.book_description,
+        "podcast_rec_title": mentor.podcast_rec_title,
+        "podcast_name": mentor.podcast_name,
+        "podcast_youtube": mentor.podcast_youtube,
+        "podcast_spotify": mentor.podcast_spotify,
+        "podcast_apple": mentor.podcast_apple,
+        "quick_prompts": mentor.quick_prompts
     }
 
 
@@ -1916,3 +2046,349 @@ async def update_chatbot_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update chatbot configuration"
         )
+
+
+# ============================================================================
+# Newsletter Management Endpoints
+# ============================================================================
+
+@router.get("/newsletter/subscribers")
+async def get_newsletter_subscribers(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, description="Filter by status: active, unsubscribed"),
+    search: Optional[str] = Query(None, description="Search by email")
+):
+    """
+    Get all newsletter subscribers (admin only)
+
+    - Supports pagination
+    - Supports filtering by status
+    - Supports search by email
+    """
+    query = db.query(NewsletterSubscriber)
+
+    # Apply status filter
+    if status_filter:
+        if status_filter == "active":
+            query = query.filter(NewsletterSubscriber.status == SubscriberStatus.ACTIVE)
+        elif status_filter == "unsubscribed":
+            query = query.filter(NewsletterSubscriber.status == SubscriberStatus.UNSUBSCRIBED)
+
+    # Apply search filter
+    if search:
+        query = query.filter(NewsletterSubscriber.email.ilike(f"%{search}%"))
+
+    # Get total count
+    total = query.count()
+
+    # Apply pagination
+    subscribers = query.order_by(NewsletterSubscriber.subscribed_at.desc()).offset((page - 1) * limit).limit(limit).all()
+
+    # Calculate pages
+    pages = (total + limit - 1) // limit if total > 0 else 1
+
+    return {
+        "items": [
+            {
+                "id": sub.id,
+                "email": sub.email,
+                "status": sub.status.value,
+                "subscribed_at": sub.subscribed_at,
+                "unsubscribed_at": sub.unsubscribed_at,
+                "source": sub.source,
+                "ip_address": sub.ip_address
+            }
+            for sub in subscribers
+        ],
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages
+    }
+
+
+@router.get("/newsletter/stats")
+async def get_newsletter_stats(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Get newsletter statistics (admin only)
+    """
+    total = db.query(func.count(NewsletterSubscriber.id)).scalar()
+    active = db.query(func.count(NewsletterSubscriber.id)).filter(
+        NewsletterSubscriber.status == SubscriberStatus.ACTIVE
+    ).scalar()
+    unsubscribed = db.query(func.count(NewsletterSubscriber.id)).filter(
+        NewsletterSubscriber.status == SubscriberStatus.UNSUBSCRIBED
+    ).scalar()
+
+    # Get subscriptions in last 7 days
+    seven_days_ago = now_naive() - timedelta(days=7)
+    new_this_week = db.query(func.count(NewsletterSubscriber.id)).filter(
+        NewsletterSubscriber.subscribed_at >= seven_days_ago
+    ).scalar()
+
+    # Get subscriptions in last 30 days
+    thirty_days_ago = now_naive() - timedelta(days=30)
+    new_this_month = db.query(func.count(NewsletterSubscriber.id)).filter(
+        NewsletterSubscriber.subscribed_at >= thirty_days_ago
+    ).scalar()
+
+    return {
+        "total": total,
+        "active": active,
+        "unsubscribed": unsubscribed,
+        "new_this_week": new_this_week,
+        "new_this_month": new_this_month
+    }
+
+
+@router.delete("/newsletter/subscribers/{subscriber_id}")
+async def delete_newsletter_subscriber(
+    subscriber_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Delete a newsletter subscriber (admin only)
+    """
+    subscriber = db.query(NewsletterSubscriber).filter(
+        NewsletterSubscriber.id == subscriber_id
+    ).first()
+
+    if not subscriber:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscriber not found"
+        )
+
+    db.delete(subscriber)
+    db.commit()
+
+    return {"success": True, "message": "Subscriber deleted successfully"}
+
+
+@router.post("/newsletter/export")
+async def export_newsletter_subscribers(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin),
+    status_filter: Optional[str] = Query(None, description="Filter by status: active, unsubscribed")
+):
+    """
+    Export newsletter subscribers as CSV (admin only)
+    """
+    import csv
+    import io
+
+    query = db.query(NewsletterSubscriber)
+
+    if status_filter:
+        if status_filter == "active":
+            query = query.filter(NewsletterSubscriber.status == SubscriberStatus.ACTIVE)
+        elif status_filter == "unsubscribed":
+            query = query.filter(NewsletterSubscriber.status == SubscriberStatus.UNSUBSCRIBED)
+
+    subscribers = query.order_by(NewsletterSubscriber.subscribed_at.desc()).all()
+
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Email", "Status", "Subscribed At", "Unsubscribed At", "Source"])
+
+    for sub in subscribers:
+        writer.writerow([
+            sub.email,
+            sub.status.value,
+            sub.subscribed_at.isoformat() if sub.subscribed_at else "",
+            sub.unsubscribed_at.isoformat() if sub.unsubscribed_at else "",
+            sub.source
+        ])
+
+    csv_content = output.getvalue()
+    output.close()
+
+    # Upload to S3
+    from app.services.file_service import file_service
+    filename = f"newsletter_export_{now_naive().strftime('%Y%m%d_%H%M%S')}.csv"
+
+    file_url = await file_service.upload_export_file(
+        content=csv_content.encode('utf-8'),
+        filename=filename,
+        content_type="text/csv"
+    )
+
+    return {"success": True, "download_url": file_url}
+
+
+# =============================================================================
+# Contact Message Management Endpoints
+# =============================================================================
+
+@router.get("/contacts", response_model=PaginatedContactMessagesResponse)
+async def list_contact_messages(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, description="Filter by status: new, read, replied, archived"),
+    search: Optional[str] = Query(None, description="Search by name, email, or subject"),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin)
+):
+    """
+    List all contact messages with pagination and filtering.
+    Admin only endpoint.
+    """
+    query = db.query(ContactMessage)
+
+    # Apply status filter
+    if status_filter:
+        try:
+            status_enum = ContactMessageStatus(status_filter)
+            query = query.filter(ContactMessage.status == status_enum)
+        except ValueError:
+            pass
+
+    # Apply search filter
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            (ContactMessage.name.ilike(search_term)) |
+            (ContactMessage.email.ilike(search_term)) |
+            (ContactMessage.subject.ilike(search_term))
+        )
+
+    # Get total count
+    total = query.count()
+    pages = (total + limit - 1) // limit
+
+    # Get paginated results
+    messages = query.order_by(ContactMessage.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
+
+    return PaginatedContactMessagesResponse(
+        items=[ContactMessageResponse(
+            id=msg.id,
+            name=msg.name,
+            email=msg.email,
+            subject=msg.subject,
+            message=msg.message,
+            status=msg.status.value,
+            ip_address=msg.ip_address,
+            user_agent=msg.user_agent,
+            created_at=msg.created_at,
+            read_at=msg.read_at,
+            replied_at=msg.replied_at
+        ) for msg in messages],
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages
+    )
+
+
+@router.get("/contacts/{contact_id}", response_model=ContactMessageResponse)
+async def get_contact_message(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin)
+):
+    """
+    Get a single contact message by ID.
+    Admin only endpoint.
+    """
+    message = db.query(ContactMessage).filter(ContactMessage.id == contact_id).first()
+
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact message not found"
+        )
+
+    # Mark as read if new
+    if message.status == ContactMessageStatus.NEW:
+        message.status = ContactMessageStatus.READ
+        message.read_at = now_naive()
+        db.commit()
+        db.refresh(message)
+
+    return ContactMessageResponse(
+        id=message.id,
+        name=message.name,
+        email=message.email,
+        subject=message.subject,
+        message=message.message,
+        status=message.status.value,
+        ip_address=message.ip_address,
+        user_agent=message.user_agent,
+        created_at=message.created_at,
+        read_at=message.read_at,
+        replied_at=message.replied_at
+    )
+
+
+@router.patch("/contacts/{contact_id}/status")
+async def update_contact_message_status(
+    contact_id: int,
+    request: UpdateContactMessageStatusRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin)
+):
+    """
+    Update contact message status.
+    Admin only endpoint.
+    """
+    message = db.query(ContactMessage).filter(ContactMessage.id == contact_id).first()
+
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact message not found"
+        )
+
+    try:
+        new_status = ContactMessageStatus(request.status)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status. Must be one of: new, read, replied, archived"
+        )
+
+    message.status = new_status
+
+    # Update timestamps based on status
+    if new_status == ContactMessageStatus.READ and not message.read_at:
+        message.read_at = now_naive()
+    elif new_status == ContactMessageStatus.REPLIED and not message.replied_at:
+        message.replied_at = now_naive()
+        if not message.read_at:
+            message.read_at = now_naive()
+
+    db.commit()
+
+    return {"success": True, "message": f"Status updated to {new_status.value}"}
+
+
+@router.delete("/contacts/{contact_id}")
+async def delete_contact_message(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin)
+):
+    """
+    Delete a contact message.
+    Admin only endpoint.
+    """
+    message = db.query(ContactMessage).filter(ContactMessage.id == contact_id).first()
+
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact message not found"
+        )
+
+    db.delete(message)
+    db.commit()
+
+    return {"success": True, "message": "Contact message deleted"}

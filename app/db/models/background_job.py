@@ -5,9 +5,9 @@ from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Float,
     Enum as SQLEnum, JSON
 )
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class JobStatus(str, Enum):
@@ -57,7 +57,7 @@ class BackgroundJob(Base):
     error_message = Column(Text, nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
@@ -75,13 +75,13 @@ class BackgroundJob(Base):
     def mark_processing(self):
         """Mark job as processing"""
         self.status = JobStatus.PROCESSING
-        self.started_at = datetime.utcnow()
+        self.started_at = now_naive()
 
     def mark_completed(self, result: dict = None):
         """Mark job as completed"""
         self.status = JobStatus.COMPLETED
         self.progress = 100.0
-        self.completed_at = datetime.utcnow()
+        self.completed_at = now_naive()
         if result:
             self.result = result
 
@@ -89,7 +89,7 @@ class BackgroundJob(Base):
         """Mark job as failed"""
         self.status = JobStatus.FAILED
         self.error_message = error
-        self.completed_at = datetime.utcnow()
+        self.completed_at = now_naive()
 
     def to_dict(self):
         """Convert to dictionary for API response"""

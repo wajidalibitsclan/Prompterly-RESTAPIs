@@ -5,11 +5,12 @@ Includes search and RAG integration
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 import asyncio
 
 from app.db.models.note import Note, TimeCapsule, CapsuleStatus
+from app.core.timezone import now_naive, now
 from app.services.ai_service import ai_service
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,7 @@ class NoteService:
         if tags is not None:
             note.tags = tags
         
-        note.updated_at = datetime.utcnow()
+        note.updated_at = now_naive()
 
         db.commit()
         db.refresh(note)
@@ -299,12 +300,13 @@ class NoteService:
         Returns:
             TimeCapsule instance
         """
-        # Make comparison timezone-aware
-        now = datetime.now(timezone.utc)
-        # If unlock_at is naive, assume UTC
+        # Compare with current Sydney time
+        current_time = now()
+        # If unlock_at is naive, make it timezone-aware (assume Sydney)
         if unlock_at.tzinfo is None:
-            unlock_at = unlock_at.replace(tzinfo=timezone.utc)
-        if unlock_at <= now:
+            from app.core.timezone import get_timezone
+            unlock_at = unlock_at.replace(tzinfo=get_timezone())
+        if unlock_at <= current_time:
             raise ValueError("Unlock date must be in the future")
 
         capsule = TimeCapsule(
@@ -339,18 +341,18 @@ class NoteService:
         Returns:
             List of newly unlocked capsules
         """
-        now = datetime.now(timezone.utc)
+        current_time = now_naive()
 
         # Find locked capsules ready to unlock
         capsules = db.query(TimeCapsule).filter(
             TimeCapsule.status == CapsuleStatus.LOCKED,
-            TimeCapsule.unlock_at <= now
+            TimeCapsule.unlock_at <= current_time
         ).all()
 
         unlocked = []
         for capsule in capsules:
             capsule.status = CapsuleStatus.UNLOCKED
-            capsule.updated_at = datetime.now(timezone.utc)
+            capsule.updated_at = now_naive()
             unlocked.append(capsule)
             
             logger.info(f"Unlocked capsule {capsule.id} for user {capsule.user_id}")
@@ -391,16 +393,14 @@ class NoteService:
         if capsule.status == CapsuleStatus.UNLOCKED:
             raise ValueError("Capsule is already unlocked")
 
-        now = datetime.now(timezone.utc)
+        current_time = now_naive()
         unlock_at = capsule.unlock_at
-        if unlock_at.tzinfo is None:
-            unlock_at = unlock_at.replace(tzinfo=timezone.utc)
 
-        if unlock_at > now:
+        if unlock_at > current_time:
             raise ValueError("Cannot unlock capsule before its scheduled time")
 
         capsule.status = CapsuleStatus.UNLOCKED
-        capsule.updated_at = datetime.now(timezone.utc)
+        capsule.updated_at = now_naive()
         db.commit()
         db.refresh(capsule)
 
@@ -484,11 +484,11 @@ class NoteService:
             capsule.content = content
         
         if unlock_at is not None:
-            if unlock_at <= datetime.utcnow():
+            if unlock_at <= now_naive():
                 raise ValueError("Unlock date must be in the future")
             capsule.unlock_at = unlock_at
         
-        capsule.updated_at = datetime.utcnow()
+        capsule.updated_at = now_naive()
         
         db.commit()
         db.refresh(capsule)
@@ -541,7 +541,7 @@ class NoteService:
         if capsule.status != CapsuleStatus.LOCKED:
             return None
         
-        now = datetime.utcnow()
+        now = now_naive()
         delta = capsule.unlock_at - now
         
         return max(0, delta.days)

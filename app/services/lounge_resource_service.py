@@ -4,11 +4,11 @@ Lounge Resource service for managing lounge documents/resources
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime
 import logging
 import os
 
 from app.db.models.lounge_resource import LoungeResource
+from app.core.timezone import now_naive
 from app.db.models.file import File
 from app.db.models.lounge import Lounge
 from app.services.file_service import file_service
@@ -168,7 +168,7 @@ class LoungeResourceService:
         if description is not None:
             resource.description = description
 
-        resource.updated_at = datetime.utcnow()
+        resource.updated_at = now_naive()
 
         db.commit()
         db.refresh(resource)

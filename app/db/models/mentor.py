@@ -1,12 +1,11 @@
 """
 Mentor and Category models
 """
-from sqlalchemy import Column, Integer, String, ForeignKey, Enum as SQLEnum, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, Enum as SQLEnum, Text, DateTime
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
-from sqlalchemy import DateTime
+from app.core.timezone import now_naive
 
 
 class MentorStatus(str, Enum):
@@ -37,13 +36,40 @@ class Mentor(Base):
         default=MentorStatus.PENDING,
         nullable=False
     )
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     updated_at = Column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_naive,
+        onupdate=now_naive,
         nullable=False
     )
+
+    # Mentor profile fields for "More from Mentor" modal
+    mentor_title = Column(String(255), nullable=True)  # e.g., "Mindset mentor"
+    philosophy = Column(Text, nullable=True)  # Mentor's philosophy/bio
+    hobbies = Column(Text, nullable=True)  # JSON array of hobbies/interests
+
+    # Social links
+    social_instagram = Column(String(500), nullable=True)
+    social_tiktok = Column(String(500), nullable=True)
+    social_linkedin = Column(String(500), nullable=True)
+    social_youtube = Column(String(500), nullable=True)
+
+    # Book recommendation
+    book_title = Column(String(500), nullable=True)
+    book_description = Column(Text, nullable=True)
+
+    # Podcast recommendation
+    podcast_rec_title = Column(String(500), nullable=True)
+
+    # Podcast links (More from me section)
+    podcast_name = Column(String(255), nullable=True)
+    podcast_youtube = Column(String(500), nullable=True)
+    podcast_spotify = Column(String(500), nullable=True)
+    podcast_apple = Column(String(500), nullable=True)
+
+    # Quick prompts - JSON array of prompt strings
+    quick_prompts = Column(Text, nullable=True)
     
     # Relationships
     user = relationship("User", back_populates="mentor_profile")

@@ -6,9 +6,9 @@ from sqlalchemy import (
     Enum as SQLEnum, DateTime, Boolean, JSON
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class BillingInterval(str, Enum):
@@ -99,7 +99,7 @@ class Subscription(Base):
         default=SubscriptionStatus.TRIALING,
         nullable=False
     )
-    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, default=now_naive, nullable=False)
     renews_at = Column(DateTime, nullable=False)
     canceled_at = Column(DateTime, nullable=True)
     
@@ -120,7 +120,7 @@ class Subscription(Base):
         """Get days until renewal"""
         if not self.is_active:
             return 0
-        delta = self.renews_at - datetime.utcnow()
+        delta = self.renews_at - now_naive()
         return max(0, delta.days)
     
     def __repr__(self):
@@ -147,7 +147,7 @@ class Payment(Base):
         default=PaymentStatus.PENDING,
         nullable=False
     )
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="payments")
@@ -189,7 +189,7 @@ class LoungeSubscription(Base):
         default=SubscriptionStatus.ACTIVE,
         nullable=False
     )
-    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, default=now_naive, nullable=False)
     renews_at = Column(DateTime, nullable=False)
     canceled_at = Column(DateTime, nullable=True)
 
@@ -217,7 +217,7 @@ class LoungeSubscription(Base):
         """Get days until renewal"""
         if not self.is_active:
             return 0
-        delta = self.renews_at - datetime.utcnow()
+        delta = self.renews_at - now_naive()
         return max(0, delta.days)
 
     def __repr__(self):

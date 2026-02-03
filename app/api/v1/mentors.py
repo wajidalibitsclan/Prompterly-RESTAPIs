@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
-from datetime import datetime
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.jwt import (
     get_current_user,
     get_current_active_user,
@@ -232,7 +232,7 @@ async def update_mentor_profile(
     if update_data.experience_years is not None:
         mentor.experience_years = update_data.experience_years
     
-    mentor.updated_at = datetime.utcnow()
+    mentor.updated_at = now_naive()
     
     db.commit()
     db.refresh(mentor)
@@ -337,7 +337,7 @@ async def approve_mentor(
         mentor.status = MentorStatus.DISABLED
         # TODO: Send rejection email with feedback
     
-    mentor.updated_at = datetime.utcnow()
+    mentor.updated_at = now_naive()
     
     db.commit()
     db.refresh(mentor)

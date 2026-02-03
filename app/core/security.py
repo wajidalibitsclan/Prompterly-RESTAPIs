@@ -12,11 +12,12 @@ Security utilities for password hashing, verification, and token generation
 # pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional, Dict, Any
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from app.core.config import settings
+from app.core.timezone import now_naive
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -66,15 +67,15 @@ def create_access_token(
     to_encode = data.copy()
     
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = now_naive() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(
+        expire = now_naive() + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
     
     to_encode.update({
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": now_naive(),
         "type": "access"
     })
     
@@ -104,15 +105,15 @@ def create_refresh_token(
     to_encode = data.copy()
     
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = now_naive() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(
+        expire = now_naive() + timedelta(
             days=settings.REFRESH_TOKEN_EXPIRE_DAYS
         )
     
     to_encode.update({
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": now_naive(),
         "type": "refresh"
     })
     
@@ -159,7 +160,7 @@ def generate_email_verification_token(email: str) -> str:
         Verification token
     """
     data = {"email": email, "purpose": "email_verification"}
-    expire = datetime.utcnow() + timedelta(hours=24)
+    expire = now_naive() + timedelta(hours=24)
     
     to_encode = data.copy()
     to_encode.update({"exp": expire})
@@ -207,7 +208,7 @@ def generate_password_reset_token(email: str) -> str:
         Password reset token
     """
     data = {"email": email, "purpose": "password_reset"}
-    expire = datetime.utcnow() + timedelta(hours=1)
+    expire = now_naive() + timedelta(hours=1)
     
     to_encode = data.copy()
     to_encode.update({"exp": expire})

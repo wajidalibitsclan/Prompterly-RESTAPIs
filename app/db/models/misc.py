@@ -6,9 +6,9 @@ from sqlalchemy import (
     Enum as SQLEnum, Text, DateTime, Boolean, JSON
 )
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from enum import Enum
 from app.db.base import Base
+from app.core.timezone import now_naive
 
 
 class NotificationChannel(str, Enum):
@@ -41,7 +41,7 @@ class Notification(Base):
     )
     sent_at = Column(DateTime, nullable=True)
     read_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="notifications")
@@ -77,8 +77,8 @@ class StaticPage(Base):
     is_published = Column(Boolean, default=False, nullable=False)
     updated_at = Column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_naive,
+        onupdate=now_naive,
         nullable=False
     )
     
@@ -136,7 +136,7 @@ class ComplianceRequest(Base):
         default=RequestStatus.PENDING,
         nullable=False
     )
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
 
     # Relationships
     user = relationship("User", back_populates="compliance_requests")
@@ -180,7 +180,7 @@ class ContactMessage(Base):
     )
     ip_address = Column(String(45), nullable=True)  # IPv6 can be up to 45 chars
     user_agent = Column(String(500), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     read_at = Column(DateTime, nullable=True)
     replied_at = Column(DateTime, nullable=True)
 

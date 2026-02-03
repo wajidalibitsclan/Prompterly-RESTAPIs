@@ -184,6 +184,9 @@ class ChatService:
                 db.commit()
                 db.refresh(ai_message)
 
+                # Auto-generate thread title if this is the first exchange
+                await self._auto_generate_thread_title(thread, content, db)
+
             except Exception as e:
                 logger.error(f"Error generating AI response: {str(e)}")
                 # Continue even if AI response fails
@@ -311,7 +314,13 @@ class ChatService:
             db.commit()
             db.refresh(ai_message)
 
-            # Yield completion event with full message
+            # Auto-generate thread title if this is the first exchange
+            await self._auto_generate_thread_title(thread, content, db)
+
+            # Refresh thread to get updated title
+            db.refresh(thread)
+
+            # Yield completion event with full message and updated thread title
             yield {
                 "event": "ai_complete",
                 "data": {
@@ -320,7 +329,8 @@ class ChatService:
                     "sender_type": "ai",
                     "content": ai_message.content,
                     "created_at": ai_message.created_at.isoformat(),
-                    "metadata": metadata
+                    "metadata": metadata,
+                    "thread_title": thread.title
                 }
             }
 
@@ -812,7 +822,7 @@ Communication Style:
         Returns:
             Tuple of (edited_message, new_ai_message or None)
         """
-        from datetime import datetime
+        from app.core.timezone import now_naive
 
         # Get the message
         message = db.query(ChatMessage).filter(
@@ -837,7 +847,7 @@ Communication Style:
 
         # Update the message
         message.content = new_content
-        message.edited_at = datetime.utcnow()
+        message.edited_at = now_naive()
         db.commit()
         db.refresh(message)
 
@@ -1050,6 +1060,77 @@ Communication Style:
                 "event": "error",
                 "data": {"error": str(e)}
             }
+
+    async def _auto_generate_thread_title(
+        self,
+        thread: ChatThread,
+        user_message_content: str,
+        db: Session
+    ) -> None:
+        """
+        Auto-generate a thread title based on the first user message
+        Only generates if thread has default title and this is the first message
+
+        Args:
+            thread: The chat thread
+            user_message_content: The user's message content
+            db: Database session
+        """
+        try:
+            # Check if thread has a default/generic title
+            default_titles = ["New Conversation", "New Chat", "Conversation"]
+            is_default_title = any(
+                thread.title.startswith(t) for t in default_titles
+            ) if thread.title else True
+
+            if not is_default_title:
+                return  # Already has a custom title
+
+            # Count messages in thread - only generate title for first exchange
+            message_count = db.query(func.count(ChatMessage.id)).filter(
+                ChatMessage.thread_id == thread.id
+            ).scalar()
+
+            # Only generate title after first exchange (user + AI = 2 messages)
+            if message_count > 2:
+                return
+
+            # Generate title using AI
+            title_prompt = f"""Generate a very short, concise title (3-6 words max) for a conversation that starts with this message:
+
+"{user_message_content[:200]}"
+
+Rules:
+- Maximum 6 words
+- No quotes or special characters
+- Capture the main topic/intent
+- Be specific, not generic
+- Don't include words like "conversation", "chat", "discussion"
+
+Return ONLY the title, nothing else."""
+
+            title_response, _ = await self.ai_service.generate_chat_response(
+                messages=[{"role": "user", "content": title_prompt}],
+                context="You are a helpful assistant that generates short, descriptive titles.",
+                use_anthropic=False
+            )
+
+            # Clean up the generated title
+            new_title = title_response.strip().strip('"\'').strip()
+
+            # Ensure title is not too long
+            if len(new_title) > 50:
+                new_title = new_title[:47] + "..."
+
+            # Update thread title
+            if new_title:
+                thread.title = new_title
+                db.commit()
+                logger.info(f"Auto-generated thread title: '{new_title}' for thread {thread.id}")
+
+        except Exception as e:
+            logger.error(f"Error auto-generating thread title: {str(e)}")
+            # Don't raise - title generation failure shouldn't break the chat
 
     async def _generate_ai_response_for_message(
         self,

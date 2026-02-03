@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
-from datetime import datetime
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.jwt import (
     get_current_user,
     get_current_active_user,
@@ -104,6 +104,8 @@ async def get_my_lounges(
             "category_id": lounge.category_id,
             "access_type": lounge.access_type.value,
             "profile_image_url": profile_image_url,
+            "about": lounge.about,
+            "brand_color": lounge.brand_color,
             "created_at": lounge.created_at,
             "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
             "mentor_avatar": lounge.mentor.user.avatar_url if lounge.mentor else None,
@@ -128,6 +130,7 @@ async def list_lounges(
     limit: int = Query(20, ge=1, le=100),
     page: int = Query(1, ge=1),
     category_id: Optional[int] = None,
+    category_ids: Optional[str] = Query(None, description="Comma-separated list of category IDs"),
     access_type: Optional[AccessType] = None,
     search: Optional[str] = None,
     mentor_id: Optional[int] = None
@@ -141,8 +144,15 @@ async def list_lounges(
     """
     query = db.query(Lounge).filter(Lounge.is_public_listing == True)
 
-    # Category filter
-    if category_id:
+    # Category filter - support multiple category IDs
+    if category_ids:
+        try:
+            ids_list = [int(id.strip()) for id in category_ids.split(',') if id.strip()]
+            if ids_list:
+                query = query.filter(Lounge.category_id.in_(ids_list))
+        except ValueError:
+            pass  # Invalid category_ids format, ignore the filter
+    elif category_id:
         query = query.filter(Lounge.category_id == category_id)
 
     # Access type filter
@@ -199,6 +209,8 @@ async def list_lounges(
             "category_id": lounge.category_id,
             "access_type": lounge.access_type.value,
             "profile_image_url": profile_image_url,
+            "about": lounge.about,
+            "brand_color": lounge.brand_color,
             "created_at": lounge.created_at,
             "mentor_name": lounge.mentor.user.name if lounge.mentor else None,
             "mentor_avatar": lounge.mentor.user.avatar_url if lounge.mentor else None,
@@ -271,7 +283,9 @@ async def create_lounge(
         access_type=lounge_data.access_type,
         plan_id=lounge_data.plan_id,
         max_members=lounge_data.max_members,
-        is_public_listing=lounge_data.is_public_listing
+        is_public_listing=lounge_data.is_public_listing,
+        about=lounge_data.about,
+        brand_color=lounge_data.brand_color
     )
     
     db.add(lounge)
@@ -290,10 +304,12 @@ async def create_lounge(
         max_members=lounge.max_members,
         is_public_listing=lounge.is_public_listing,
         profile_image_url=None,
+        about=lounge.about,
+        brand_color=lounge.brand_color,
         created_at=lounge.created_at,
         mentor_name=current_user.name,
         mentor_avatar=current_user.avatar_url,
-        category_name=category.name,
+        category_name=category.name if lounge_data.category_id else None,
         member_count=0,
         is_full=False,
         is_member=False
@@ -376,6 +392,8 @@ async def get_lounge(
         max_members=lounge.max_members,
         is_public_listing=lounge.is_public_listing,
         profile_image_url=profile_image_url,
+        about=lounge.about,
+        brand_color=lounge.brand_color,
         created_at=lounge.created_at,
         stripe_product_id=lounge.stripe_product_id,
         stripe_monthly_price_id=lounge.stripe_monthly_price_id,
@@ -389,6 +407,88 @@ async def get_lounge(
         is_full=is_full,
         is_member=is_member
     )
+
+
+@router.get("/{lounge_id}/mentor-profile")
+async def get_lounge_mentor_profile(
+    lounge_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get mentor profile data for a lounge (More from Mentor)
+
+    - Requires authentication
+    - Returns mentor's profile information for the "More from Mentor" modal
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+
+    if not lounge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lounge not found"
+        )
+
+    # Check if user is member or mentor
+    is_mentor = (lounge.mentor.user_id == current_user.id)
+    is_member = db.query(LoungeMembership).filter(
+        LoungeMembership.lounge_id == lounge_id,
+        LoungeMembership.user_id == current_user.id,
+        LoungeMembership.left_at.is_(None)
+    ).first() is not None
+
+    if not (is_mentor or is_member):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied - must be a member of this lounge"
+        )
+
+    mentor = lounge.mentor
+    if not mentor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mentor not found for this lounge"
+        )
+
+    # Parse hobbies from JSON string to list
+    hobbies_list = []
+    if mentor.hobbies:
+        # hobbies is stored as newline-separated text
+        hobbies_list = [h.strip() for h in mentor.hobbies.split('\n') if h.strip()]
+
+    # Parse quick_prompts from JSON string to list
+    quick_prompts_list = []
+    if mentor.quick_prompts:
+        # quick_prompts is stored as newline-separated text
+        quick_prompts_list = [p.strip() for p in mentor.quick_prompts.split('\n') if p.strip()]
+
+    return {
+        "mentor_name": mentor.user.name,
+        "mentor_avatar": mentor.user.avatar_url,
+        "mentor_title": mentor.mentor_title,
+        "philosophy": mentor.philosophy,
+        "hobbies": hobbies_list,
+        "book_recommendation": {
+            "title": mentor.book_title,
+            "description": mentor.book_description
+        } if mentor.book_title else None,
+        "podcast_recommendation": {
+            "title": mentor.podcast_rec_title
+        } if mentor.podcast_rec_title else None,
+        "podcast_name": mentor.podcast_name,
+        "podcast_links": {
+            "youtube": mentor.podcast_youtube,
+            "spotify": mentor.podcast_spotify,
+            "apple": mentor.podcast_apple
+        } if (mentor.podcast_youtube or mentor.podcast_spotify or mentor.podcast_apple) else None,
+        "social_links": {
+            "instagram": mentor.social_instagram,
+            "tiktok": mentor.social_tiktok,
+            "linkedin": mentor.social_linkedin,
+            "youtube": mentor.social_youtube
+        } if (mentor.social_instagram or mentor.social_tiktok or mentor.social_linkedin or mentor.social_youtube) else None,
+        "quick_prompts": quick_prompts_list
+    }
 
 
 @router.put("/{lounge_id}", response_model=LoungeResponse)
@@ -453,7 +553,13 @@ async def update_lounge(
     
     if update_data.is_public_listing is not None:
         lounge.is_public_listing = update_data.is_public_listing
-    
+
+    if update_data.about is not None:
+        lounge.about = update_data.about
+
+    if update_data.brand_color is not None:
+        lounge.brand_color = update_data.brand_color
+
     db.commit()
     db.refresh(lounge)
 
@@ -480,6 +586,8 @@ async def update_lounge(
         max_members=lounge.max_members,
         is_public_listing=lounge.is_public_listing,
         profile_image_url=profile_image_url,
+        about=lounge.about,
+        brand_color=lounge.brand_color,
         created_at=lounge.created_at,
         mentor_name=current_user.name,
         mentor_avatar=current_user.avatar_url,
@@ -634,7 +742,7 @@ async def leave_lounge(
             detail="Not a member of this lounge"
         )
     
-    membership.left_at = datetime.utcnow()
+    membership.left_at = now_naive()
     db.commit()
     
     return None
@@ -793,6 +901,8 @@ async def upload_lounge_profile_image(
         max_members=lounge.max_members,
         is_public_listing=lounge.is_public_listing,
         profile_image_url=profile_image_url,
+        about=lounge.about,
+        brand_color=lounge.brand_color,
         created_at=lounge.created_at,
         mentor_name=lounge.mentor.user.name if lounge.mentor else None,
         mentor_avatar=lounge.mentor.user.avatar_url if lounge.mentor else None,

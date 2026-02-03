@@ -5,11 +5,11 @@ Handles subscriptions, payments, and Stripe webhooks
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
 import stripe
 import logging
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.jwt import get_current_active_user
 from app.core.config import settings
 from app.db.models.user import User
@@ -134,7 +134,7 @@ async def get_subscription(
     is_active = subscription.status in ['active', 'trialing']
     days_until = None
     if subscription.renews_at:
-        delta = subscription.renews_at - datetime.utcnow()
+        delta = subscription.renews_at - now_naive()
         days_until = max(0, delta.days)
     
     return SubscriptionResponse(
@@ -477,7 +477,7 @@ async def get_lounge_subscription(
     days_until = None
     if subscription.renews_at:
         from datetime import datetime
-        delta = subscription.renews_at - datetime.utcnow()
+        delta = subscription.renews_at - now_naive()
         days_until = max(0, delta.days)
 
     return LoungeSubscriptionResponse(
@@ -523,7 +523,7 @@ async def get_lounge_subscriptions(
         days_until = None
         if subscription.renews_at:
             from datetime import datetime
-            delta = subscription.renews_at - datetime.utcnow()
+            delta = subscription.renews_at - now_naive()
             days_until = max(0, delta.days)
 
         result.append(LoungeSubscriptionResponse(
@@ -640,7 +640,7 @@ async def upgrade_lounge_subscription(
 
         days_until = None
         if subscription.renews_at:
-            delta = subscription.renews_at - datetime.utcnow()
+            delta = subscription.renews_at - now_naive()
             days_until = max(0, delta.days)
 
         # Send upgrade confirmation email
@@ -1024,7 +1024,7 @@ async def stripe_webhook(
                         card_data = event_data.get('card', {})
                         card_last_four = card_data.get('last4', '****')
                         card_brand = card_data.get('brand', 'Card')
-                        updated_at = datetime.utcnow().strftime("%B %d, %Y at %H:%M UTC")
+                        updated_at = now_naive().strftime("%B %d, %Y at %H:%M UTC")
 
                         send_payment_method_update_email_sync(
                             user.email,

@@ -4,10 +4,10 @@ Handles user profile, password changes, activity logs
 """
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
-from datetime import datetime
 from typing import List
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.jwt import get_current_user, get_current_active_user
 from app.core.security import verify_password, hash_password
 from app.db.models.user import User
@@ -53,7 +53,7 @@ async def update_current_user_profile(
     if user_update.avatar_url is not None:
         current_user.avatar_url = user_update.avatar_url
     
-    current_user.updated_at = datetime.utcnow()
+    current_user.updated_at = now_naive()
     
     db.commit()
     db.refresh(current_user)
@@ -106,7 +106,7 @@ async def upload_avatar(
 
         # Update user's avatar_url
         current_user.avatar_url = avatar_url
-        current_user.updated_at = datetime.utcnow()
+        current_user.updated_at = now_naive()
 
         db.commit()
         db.refresh(current_user)
@@ -137,7 +137,7 @@ async def remove_avatar(
     - Returns updated user profile
     """
     current_user.avatar_url = None
-    current_user.updated_at = datetime.utcnow()
+    current_user.updated_at = now_naive()
 
     db.commit()
     db.refresh(current_user)
@@ -167,7 +167,7 @@ async def change_password(
 
     # Update password
     current_user.password_hash = hash_password(password_data.new_password)
-    current_user.updated_at = datetime.utcnow()
+    current_user.updated_at = now_naive()
 
     db.commit()
 
@@ -270,7 +270,7 @@ async def delete_current_user(
     ).all()
     
     for session in sessions:
-        session.revoked_at = datetime.utcnow()
+        session.revoked_at = now_naive()
     
     db.commit()
     

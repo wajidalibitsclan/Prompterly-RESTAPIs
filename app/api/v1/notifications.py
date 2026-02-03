@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
-from datetime import datetime
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.jwt import get_current_active_user
 from app.db.models.user import User
 from app.db.models.misc import Notification, NotificationStatus, NotificationChannel
@@ -107,7 +107,7 @@ async def mark_as_read(
         Notification.read_at.is_(None)
     ).all()
     
-    now = datetime.utcnow()
+    now = now_naive()
     for notif in notifications:
         notif.read_at = now
         notif.status = NotificationStatus.READ
@@ -132,7 +132,7 @@ async def mark_all_read(
         Notification.read_at.is_(None)
     ).all()
     
-    now = datetime.utcnow()
+    now = now_naive()
     for notif in notifications:
         notif.read_at = now
         notif.status = NotificationStatus.READ
@@ -189,7 +189,7 @@ async def create_test_notification(
         data=notification_data.data,
         channel=NotificationChannel(notification_data.channel),
         status=NotificationStatus.SENT,
-        sent_at=datetime.utcnow()
+        sent_at=now_naive()
     )
     
     db.add(notification)

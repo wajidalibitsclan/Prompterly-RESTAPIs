@@ -1,20 +1,20 @@
 """
 Base database model with common fields and utilities
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, DateTime
 from sqlalchemy.ext.declarative import declared_attr
 from app.db.session import Base
+from app.core.timezone import now_naive
 
 
 class TimestampMixin:
     """Mixin to add created_at and updated_at timestamps"""
-    
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    created_at = Column(DateTime, default=now_naive, nullable=False)
     updated_at = Column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_naive,
+        onupdate=now_naive,
         nullable=False
     )
 

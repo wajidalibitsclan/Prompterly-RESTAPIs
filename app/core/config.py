@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     BASE_URL: str = "http://localhost:8000"  # Base URL for generating absolute URLs
     SECRET_KEY: str
 
+    # Timezone
+    TIMEZONE: str = "Australia/Sydney"  # Australian Eastern Time (AEST/AEDT)
+
     # CORS - stored as string, parsed to list via property
     CORS_ORIGINS_STR: str = "https://prompterly.bitsclan.us,http://localhost:3000,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174"
 

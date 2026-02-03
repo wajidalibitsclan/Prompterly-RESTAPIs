@@ -6,12 +6,13 @@ from fastapi import APIRouter, Depends, BackgroundTasks, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from datetime import datetime, timedelta
+from datetime import timedelta
 import httpx
 import random
 import string
 
 from app.db.session import get_db
+from app.core.timezone import now_naive
 from app.core.security import (
     hash_password,
     verify_password,
@@ -101,14 +102,14 @@ async def send_registration_otp(
     try:
         # Generate OTP
         otp = generate_otp()
-        expires_at = datetime.utcnow() + timedelta(minutes=10)
+        expires_at = now_naive() + timedelta(minutes=10)
 
         # Invalidate any existing OTPs for this email
         db.query(EmailOTP).filter(
             EmailOTP.email == user_data.email,
             EmailOTP.purpose == "registration",
             EmailOTP.verified_at.is_(None)
-        ).update({"verified_at": datetime.utcnow()})
+        ).update({"verified_at": now_naive()})
 
         # Store new OTP
         email_otp = EmailOTP(
@@ -164,7 +165,7 @@ async def verify_registration_otp(
         EmailOTP.otp == otp,
         EmailOTP.purpose == "registration",
         EmailOTP.verified_at.is_(None),
-        EmailOTP.expires_at > datetime.utcnow()
+        EmailOTP.expires_at > now_naive()
     ).first()
 
     if not email_otp:
@@ -178,7 +179,7 @@ async def verify_registration_otp(
 
     try:
         # Mark OTP as verified
-        email_otp.verified_at = datetime.utcnow()
+        email_otp.verified_at = now_naive()
 
         # Create new user with verified email
         new_user = User(
@@ -186,7 +187,7 @@ async def verify_registration_otp(
             password_hash=hash_password(password),
             name=name,
             role=UserRole.MEMBER,
-            email_verified_at=datetime.utcnow()  # Email is verified via OTP
+            email_verified_at=now_naive()  # Email is verified via OTP
         )
 
         db.add(new_user)
@@ -311,7 +312,7 @@ async def login(
     # Create session
     session = UserSession(
         user_id=user.id,
-        expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        expires_at=now_naive() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     )
     db.add(session)
     db.commit()
@@ -408,7 +409,7 @@ async def verify_email(
         logger.info(f"Email already verified: {user.email}")
         return {"message": "Email already verified"}
 
-    user.email_verified_at = datetime.utcnow()
+    user.email_verified_at = now_naive()
     db.commit()
 
     log_auth_event(logger, "EMAIL_VERIFY", user.email, True, client_ip)
@@ -447,14 +448,14 @@ async def send_password_reset_otp(
     try:
         # Generate OTP
         otp = generate_otp()
-        expires_at = datetime.utcnow() + timedelta(minutes=10)
+        expires_at = now_naive() + timedelta(minutes=10)
 
         # Invalidate any existing OTPs for this email
         db.query(EmailOTP).filter(
             EmailOTP.email == reset_request.email,
             EmailOTP.purpose == "password_reset",
             EmailOTP.verified_at.is_(None)
-        ).update({"verified_at": datetime.utcnow()})
+        ).update({"verified_at": now_naive()})
 
         # Store new OTP
         email_otp = EmailOTP(
@@ -505,7 +506,7 @@ async def verify_password_reset_otp(
         EmailOTP.otp == otp,
         EmailOTP.purpose == "password_reset",
         EmailOTP.verified_at.is_(None),
-        EmailOTP.expires_at > datetime.utcnow()
+        EmailOTP.expires_at > now_naive()
     ).first()
 
     if not email_otp:
@@ -519,7 +520,7 @@ async def verify_password_reset_otp(
 
     try:
         # Mark OTP as verified
-        email_otp.verified_at = datetime.utcnow()
+        email_otp.verified_at = now_naive()
 
         # Update password
         user.password_hash = hash_password(new_password)
@@ -532,7 +533,7 @@ async def verify_password_reset_otp(
 
         revoked_count = 0
         for session in sessions:
-            session.revoked_at = datetime.utcnow()
+            session.revoked_at = now_naive()
             revoked_count += 1
 
         db.commit()
@@ -600,7 +601,7 @@ async def reset_password(
 
     revoked_count = 0
     for session in sessions:
-        session.revoked_at = datetime.utcnow()
+        session.revoked_at = now_naive()
         revoked_count += 1
 
     db.commit()
@@ -736,7 +737,7 @@ async def google_callback(
                 name=name,
                 password_hash=hash_password(f"google_oauth_{google_user_id}"),
                 role=UserRole.MEMBER,
-                email_verified_at=datetime.utcnow()  # Google emails are verified
+                email_verified_at=now_naive()  # Google emails are verified
             )
             db.add(user)
             db.flush()
@@ -762,7 +763,7 @@ async def google_callback(
     # Create session
     session = UserSession(
         user_id=user.id,
-        expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        expires_at=now_naive() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     )
     db.add(session)
     db.commit()
@@ -800,7 +801,7 @@ async def logout(
 
     revoked_count = 0
     for session in sessions:
-        session.revoked_at = datetime.utcnow()
+        session.revoked_at = now_naive()
         revoked_count += 1
 
     db.commit()
