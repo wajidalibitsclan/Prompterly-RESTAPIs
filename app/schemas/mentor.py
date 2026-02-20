@@ -89,9 +89,21 @@ class CategoryCreate(BaseModel):
     """Schema for creating category"""
     name: str = Field(..., min_length=2, max_length=255)
     slug: str = Field(..., min_length=2, max_length=255)
-    
+
     @validator('slug')
     def validate_slug(cls, v):
         if not v.replace('-', '').replace('_', '').isalnum():
             raise ValueError('Slug must contain only letters, numbers, hyphens, and underscores')
         return v.lower()
+
+
+class CategoryUpdate(BaseModel):
+    """Schema for updating category"""
+    name: Optional[str] = Field(None, min_length=2, max_length=255)
+    slug: Optional[str] = Field(None, min_length=2, max_length=255)
+
+    @validator('slug')
+    def validate_slug(cls, v):
+        if v is not None and not v.replace('-', '').replace('_', '').isalnum():
+            raise ValueError('Slug must contain only letters, numbers, hyphens, and underscores')
+        return v.lower() if v else v

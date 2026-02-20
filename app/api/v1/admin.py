@@ -53,6 +53,7 @@ from app.schemas.lounge_resource import (
     LoungeResourceListResponse,
     LoungeResourcesListResponse
 )
+from app.schemas.mentor import CategoryCreate, CategoryUpdate
 import logging
 
 logger = logging.getLogger(__name__)
@@ -976,6 +977,161 @@ async def admin_delete_lounge(
     ).delete()
 
     db.delete(lounge)
+    db.commit()
+
+    return None
+
+
+# =============================================================================
+# Admin Category Management
+# =============================================================================
+
+@router.get("/categories")
+async def get_admin_categories(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin),
+    search: Optional[str] = None
+):
+    """
+    List all categories with lounge count
+
+    - Requires admin role
+    - Supports search by name/slug
+    """
+    query = db.query(Category)
+
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            (Category.name.ilike(search_term)) | (Category.slug.ilike(search_term))
+        )
+
+    categories = query.order_by(Category.name).all()
+
+    result = []
+    for cat in categories:
+        lounge_count = db.query(func.count(Lounge.id)).filter(
+            Lounge.category_id == cat.id
+        ).scalar()
+
+        result.append({
+            "id": cat.id,
+            "name": cat.name,
+            "slug": cat.slug,
+            "lounge_count": lounge_count
+        })
+
+    return result
+
+
+@router.post("/categories", status_code=status.HTTP_201_CREATED)
+async def admin_create_category(
+    category_data: CategoryCreate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Create a new category
+
+    - Requires admin role
+    - Slug must be unique
+    """
+    existing = db.query(Category).filter(Category.slug == category_data.slug).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category with this slug already exists"
+        )
+
+    category = Category(
+        name=category_data.name,
+        slug=category_data.slug
+    )
+
+    db.add(category)
+    db.commit()
+    db.refresh(category)
+
+    return {
+        "id": category.id,
+        "name": category.name,
+        "slug": category.slug,
+        "lounge_count": 0
+    }
+
+
+@router.put("/categories/{category_id}")
+async def admin_update_category(
+    category_id: int,
+    category_data: CategoryUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Update a category
+
+    - Requires admin role
+    - Slug uniqueness check excluding self
+    """
+    category = db.query(Category).filter(Category.id == category_id).first()
+
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found"
+        )
+
+    if category_data.slug is not None:
+        existing = db.query(Category).filter(
+            Category.slug == category_data.slug,
+            Category.id != category_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Category with this slug already exists"
+            )
+        category.slug = category_data.slug
+
+    if category_data.name is not None:
+        category.name = category_data.name
+
+    db.commit()
+    db.refresh(category)
+
+    lounge_count = db.query(func.count(Lounge.id)).filter(
+        Lounge.category_id == category.id
+    ).scalar()
+
+    return {
+        "id": category.id,
+        "name": category.name,
+        "slug": category.slug,
+        "lounge_count": lounge_count
+    }
+
+
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_category(
+    category_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Delete a category
+
+    - Requires admin role
+    - DB ON DELETE SET NULL handles lounge unlinking automatically
+    """
+    category = db.query(Category).filter(Category.id == category_id).first()
+
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found"
+        )
+
+    db.delete(category)
     db.commit()
 
     return None
