@@ -85,9 +85,9 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4-turbo-preview"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     
-    # Anthropic
+    # Anthropic (Primary AI Provider)
     ANTHROPIC_API_KEY: Optional[str] = None
-    ANTHROPIC_MODEL: str = "claude-3-opus-20240229"
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
     
     # Email - Postmark
     POSTMARK_SERVER_TOKEN: str = ""  # Postmark Server API Token (for REST API)

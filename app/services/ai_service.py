@@ -16,35 +16,37 @@ logger = logging.getLogger(__name__)
 
 
 class AIService:
-    """AI Service for chat completions and embeddings"""
-    
+    """AI Service for chat completions and embeddings. Claude is the default provider."""
+
     def __init__(self):
-        """Initialize AI clients"""
-        self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        
-        if settings.ANTHROPIC_API_KEY:
+        """Initialize AI clients — Claude primary, OpenAI for embeddings"""
+        # Claude (primary for chat)
+        if settings.ANTHROPIC_API_KEY and settings.ANTHROPIC_API_KEY != "sk-ant-your-anthropic-key":
             self.anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         else:
             self.anthropic_client = None
+
+        # OpenAI (for embeddings + fallback)
+        self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
     
     async def generate_chat_response(
         self,
         messages: List[Dict[str, str]],
         context: Optional[str] = None,
-        use_anthropic: bool = False,
+        use_anthropic: bool = True,
         temperature: float = 0.7,
         max_tokens: int = 1000
     ) -> Tuple[str, Dict]:
         """
-        Generate AI chat response
-        
+        Generate AI chat response. Defaults to Claude.
+
         Args:
             messages: List of message dicts with 'role' and 'content'
             context: Optional RAG context to inject
-            use_anthropic: Use Anthropic Claude instead of OpenAI
+            use_anthropic: Use Anthropic Claude (default True). Set False for OpenAI.
             temperature: Sampling temperature (0-2)
             max_tokens: Maximum tokens to generate
-            
+
         Returns:
             Tuple of (response_text, metadata)
         """
@@ -56,7 +58,8 @@ class AIService:
                     "content": f"Use the following context to inform your responses:\n\n{context}"
                 }
                 messages = [context_message] + messages
-            
+
+            # Default to Claude, fall back to OpenAI
             if use_anthropic and self.anthropic_client:
                 return await self._generate_anthropic_response(
                     messages, temperature, max_tokens
@@ -65,7 +68,7 @@ class AIService:
                 return await self._generate_openai_response(
                     messages, temperature, max_tokens
                 )
-        
+
         except Exception as e:
             logger.error(f"Error generating chat response: {str(e)}")
             raise
@@ -144,7 +147,7 @@ class AIService:
         max_tokens: int = 1000
     ) -> AsyncGenerator[str, None]:
         """
-        Generate AI chat response with streaming
+        Generate AI chat response with streaming. Uses Claude by default.
 
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -164,17 +167,39 @@ class AIService:
                 }
                 messages = [context_message] + messages
 
-            response = await self.openai_client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=True
-            )
+            # Use Claude for streaming if available
+            if self.anthropic_client:
+                # Separate system message for Claude
+                system_message = None
+                filtered_messages = []
+                for msg in messages:
+                    if msg["role"] == "system":
+                        system_message = msg["content"]
+                    else:
+                        filtered_messages.append(msg)
 
-            async for chunk in response:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                async with self.anthropic_client.messages.stream(
+                    model=settings.ANTHROPIC_MODEL,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system_message or "",
+                    messages=filtered_messages
+                ) as stream:
+                    async for text in stream.text_stream:
+                        yield text
+            else:
+                # Fallback to OpenAI
+                response = await self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=True
+                )
+
+                async for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
 
         except Exception as e:
             logger.error(f"Error generating streaming response: {str(e)}")
