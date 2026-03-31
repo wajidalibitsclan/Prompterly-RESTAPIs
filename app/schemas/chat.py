@@ -20,9 +20,9 @@ class ChatThreadUpdate(BaseModel):
 
 
 class ChatThreadResponse(BaseModel):
-    """Schema for chat thread response"""
+    """Schema for chat thread response — uses user_uuid for pseudonymisation"""
     id: int
-    user_id: int
+    user_uuid: str  # Pseudonymous identifier (not user_id)
     lounge_id: Optional[int]
     title: Optional[str]
     status: ThreadStatus
@@ -60,11 +60,11 @@ class ReplyToInfo(BaseModel):
 
 
 class MessageResponse(BaseModel):
-    """Schema for message response"""
+    """Schema for message response — uses user_uuid for pseudonymisation"""
     id: int
     thread_id: int
     sender_type: SenderType
-    user_id: Optional[int]
+    user_uuid: Optional[str] = None  # Pseudonymous identifier
     content: str
     metadata: Optional[dict]
     created_at: datetime

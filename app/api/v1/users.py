@@ -385,9 +385,9 @@ async def export_user_data(
     db.add(compliance_req)
     db.commit()
 
-    # 1. Profile data
+    # 1. Profile data (uses user_uuid as primary identifier)
     profile = {
-        "id": current_user.id,
+        "user_uuid": current_user.user_uuid,
         "email": current_user.email,
         "name": current_user.name,
         "role": current_user.role.value if current_user.role else None,

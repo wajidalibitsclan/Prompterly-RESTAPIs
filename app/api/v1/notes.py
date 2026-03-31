@@ -79,7 +79,7 @@ async def list_notes(
 
         items.append({
             "id": note.id,
-            "user_id": note.user_id,
+            "user_uuid": note.user.user_uuid if note.user else None,
             "lounge_id": note.lounge_id,
             "section": note.section,  # Section for grouping
             "title": note.title,

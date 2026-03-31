@@ -74,7 +74,7 @@ async def list_threads(
         
         result.append(ChatThreadResponse(
             id=thread.id,
-            user_id=thread.user_id,
+            user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
             status=thread.status,
@@ -109,7 +109,7 @@ async def create_thread(
         
         return ChatThreadResponse(
             id=thread.id,
-            user_id=thread.user_id,
+            user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
             status=thread.status,
@@ -194,7 +194,7 @@ async def get_thread(
                 id=msg.id,
                 thread_id=msg.thread_id,
                 sender_type=msg.sender_type,
-                user_id=msg.user_id,
+                user_uuid=msg.sender_user.user_uuid if msg.sender_user else None,
                 content=decrypt_content(msg.content),
                 metadata=msg.message_metadata,
                 created_at=msg.created_at,
@@ -208,7 +208,7 @@ async def get_thread(
         
         thread_response = ChatThreadResponse(
             id=thread.id,
-            user_id=thread.user_id,
+            user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
             status=thread.status,
@@ -258,7 +258,7 @@ async def update_thread(
         
         return ChatThreadResponse(
             id=thread.id,
-            user_id=thread.user_id,
+            user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
             status=thread.status,
@@ -367,7 +367,7 @@ async def send_message(
             id=user_message.id,
             thread_id=user_message.thread_id,
             sender_type=user_message.sender_type,
-            user_id=user_message.user_id,
+            user_uuid=current_user.user_uuid,
             content=decrypt_content(user_message.content),
             metadata=user_message.message_metadata,
             created_at=user_message.created_at,
@@ -385,7 +385,7 @@ async def send_message(
                 id=ai_message.id,
                 thread_id=ai_message.thread_id,
                 sender_type=ai_message.sender_type,
-                user_id=ai_message.user_id,
+                user_uuid=None,
                 content=decrypt_content(ai_message.content),
                 metadata=ai_message.message_metadata,
                 created_at=ai_message.created_at,
@@ -583,7 +583,7 @@ async def edit_message(
             id=edited_message.id,
             thread_id=edited_message.thread_id,
             sender_type=edited_message.sender_type,
-            user_id=edited_message.user_id,
+            user_uuid=current_user.user_uuid,
             content=decrypt_content(edited_message.content),
             metadata=edited_message.message_metadata,
             created_at=edited_message.created_at,
@@ -612,7 +612,7 @@ async def edit_message(
                 id=ai_message.id,
                 thread_id=ai_message.thread_id,
                 sender_type=ai_message.sender_type,
-                user_id=ai_message.user_id,
+                user_uuid=None,
                 content=decrypt_content(ai_message.content),
                 metadata=ai_message.message_metadata,
                 created_at=ai_message.created_at,
@@ -675,7 +675,7 @@ async def regenerate_response(
             id=ai_message.id,
             thread_id=ai_message.thread_id,
             sender_type=ai_message.sender_type,
-            user_id=ai_message.user_id,
+            user_uuid=None,
             content=decrypt_content(ai_message.content),
             metadata=ai_message.message_metadata,
             created_at=ai_message.created_at,

@@ -83,7 +83,7 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Add extra fields
-        for key in ['request_id', 'user_id', 'endpoint', 'method', 'status_code', 'duration_ms', 'ip_address', 'error_code']:
+        for key in ['request_id', 'user_id', 'user_uuid', 'endpoint', 'method', 'status_code', 'duration_ms', 'ip_address', 'error_code']:
             if hasattr(record, key):
                 log_data[key] = getattr(record, key)
 
@@ -250,21 +250,27 @@ def log_auth_event(
     email: str,
     success: bool,
     ip_address: Optional[str] = None,
-    reason: Optional[str] = None
+    reason: Optional[str] = None,
+    user_uuid: Optional[str] = None
 ):
-    """Log authentication events for security auditing"""
+    """Log authentication events for security auditing. Uses user_uuid for pseudonymisation."""
     extra = {
         'event': event,
-        'email': email,
         'success': success,
     }
+    # Use user_uuid in logs when available (pseudonymisation)
+    if user_uuid:
+        extra['user_uuid'] = user_uuid
+    extra['email'] = email
     if ip_address:
         extra['ip_address'] = ip_address
 
     if success:
-        logger.info(f"AUTH: {event} - {email} - SUCCESS", extra=extra)
+        identifier = user_uuid or email
+        logger.info(f"AUTH: {event} - {identifier} - SUCCESS", extra=extra)
     else:
-        logger.warning(f"AUTH: {event} - {email} - FAILED - {reason or 'Unknown reason'}", extra=extra)
+        identifier = user_uuid or email
+        logger.warning(f"AUTH: {event} - {identifier} - FAILED - {reason or 'Unknown reason'}", extra=extra)
 
 
 def log_error(
