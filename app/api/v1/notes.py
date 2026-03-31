@@ -10,6 +10,7 @@ from datetime import datetime
 
 from app.db.session import get_db
 from app.core.jwt import get_current_active_user
+from app.core.encryption import decrypt_content
 from app.db.models.user import User
 from app.db.models.note import Note, TimeCapsule, CapsuleStatus
 from app.schemas.note import (
@@ -73,8 +74,8 @@ async def list_notes(
 
     items = []
     for note in notes:
-        content_preview = note.content[:200] + "..." if len(note.content) > 200 else note.content
-        word_count = len(note.content.split())
+        content_preview = decrypt_content(note.content)[:200] + "..." if len(decrypt_content(note.content)) > 200 else note.content
+        word_count = len(decrypt_content(note.content).split())
 
         items.append({
             "id": note.id,
@@ -82,7 +83,7 @@ async def list_notes(
             "lounge_id": note.lounge_id,
             "section": note.section,  # Section for grouping
             "title": note.title,
-            "content": note.content,  # Include full content for notebook display
+            "content": decrypt_content(note.content),  # Include full content for notebook display
             "is_pinned": note.is_pinned,
             "is_included_in_rag": note.is_included_in_rag,
             "tags": note.tags or [],
@@ -130,14 +131,14 @@ async def create_note(
             tags=note_data.tags
         )
 
-        word_count = len(note.content.split())
+        word_count = len(decrypt_content(note.content).split())
 
         return NoteResponse(
             id=note.id,
             user_id=note.user_id,
             lounge_id=note.lounge_id,
             title=note.title,
-            content=note.content,
+            content=decrypt_content(note.content),
             is_pinned=note.is_pinned,
             is_included_in_rag=note.is_included_in_rag,
             tags=note.tags or [],
@@ -176,14 +177,14 @@ async def get_note(
             detail="Note not found"
         )
     
-    word_count = len(note.content.split())
+    word_count = len(decrypt_content(note.content).split())
 
     return NoteResponse(
         id=note.id,
         user_id=note.user_id,
         lounge_id=note.lounge_id,
         title=note.title,
-        content=note.content,
+        content=decrypt_content(note.content),
         is_pinned=note.is_pinned,
         is_included_in_rag=note.is_included_in_rag,
         tags=note.tags or [],
@@ -218,14 +219,14 @@ async def update_note(
             tags=update_data.tags
         )
         
-        word_count = len(note.content.split())
+        word_count = len(decrypt_content(note.content).split())
 
         return NoteResponse(
             id=note.id,
             user_id=note.user_id,
             lounge_id=note.lounge_id,
             title=note.title,
-            content=note.content,
+            content=decrypt_content(note.content),
             is_pinned=note.is_pinned,
             is_included_in_rag=note.is_included_in_rag,
             tags=note.tags or [],
@@ -293,11 +294,11 @@ async def search_notes(
         result = []
         for note in notes:
             if search_request.include_content:
-                content_preview = note.content[:200] + "..." if len(note.content) > 200 else note.content
+                content_preview = decrypt_content(note.content)[:200] + "..." if len(decrypt_content(note.content)) > 200 else note.content
             else:
                 content_preview = ""
             
-            word_count = len(note.content.split())
+            word_count = len(decrypt_content(note.content).split())
             
             result.append(NoteListResponse(
                 id=note.id,
@@ -367,8 +368,8 @@ async def get_pinned_notes(
         
         result = []
         for note in notes:
-            content_preview = note.content[:200] + "..." if len(note.content) > 200 else note.content
-            word_count = len(note.content.split())
+            content_preview = decrypt_content(note.content)[:200] + "..." if len(decrypt_content(note.content)) > 200 else note.content
+            word_count = len(decrypt_content(note.content).split())
             
             result.append(NoteListResponse(
                 id=note.id,
@@ -427,7 +428,7 @@ async def list_capsules(
                 lounge_id=capsule.lounge_id,
                 lounge_name=capsule.lounge.title if capsule.lounge else None,
                 title=capsule.title,
-                content=capsule.content if is_unlocked else None,
+                content=decrypt_content(capsule.content) if is_unlocked else None,
                 unlock_at=capsule.unlock_at,
                 status=capsule.status.value,
                 created_at=capsule.created_at,
@@ -526,7 +527,7 @@ async def get_capsule(
         lounge_id=capsule.lounge_id,
         lounge_name=capsule.lounge.title if capsule.lounge else None,
         title=capsule.title,
-        content=capsule.content if is_unlocked else None,
+        content=decrypt_content(capsule.content) if is_unlocked else None,
         unlock_at=capsule.unlock_at,
         status=capsule.status.value,
         created_at=capsule.created_at,
@@ -637,7 +638,7 @@ async def unlock_capsule(
             lounge_id=capsule.lounge_id,
             lounge_name=capsule.lounge.title if capsule.lounge else None,
             title=capsule.title,
-            content=capsule.content,
+            content=decrypt_content(capsule.content),
             unlock_at=capsule.unlock_at,
             status=capsule.status.value,
             created_at=capsule.created_at,

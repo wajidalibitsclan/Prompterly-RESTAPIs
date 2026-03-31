@@ -37,6 +37,8 @@ class Token(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    requires_2fa: Optional[bool] = None
+    temp_token: Optional[str] = None
 
 
 class TokenRefresh(BaseModel):
@@ -116,8 +118,22 @@ class UserResponse(UserBase):
     avatar_url: Optional[str]
     role: UserRole
     email_verified_at: Optional[datetime]
+    language: str = "en"
+    timezone: str = "Australia/Sydney"
+    is_2fa_enabled: bool = False
+    # Notification preferences
+    notify_email_enabled: bool = True
+    notify_in_app_enabled: bool = True
+    notify_capsule_unlock: bool = True
+    notify_new_message: bool = True
+    notify_subscription_updates: bool = True
+    notify_mentor_approved: bool = True
+    # Privacy / Legal
+    privacy_accepted_at: Optional[datetime] = None
+    tos_accepted_at: Optional[datetime] = None
+    age_confirmed: bool = False
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -148,6 +164,90 @@ class UserActivity(BaseModel):
     action: str
     timestamp: datetime
     details: Optional[dict]
-    
+
     class Config:
         from_attributes = True
+
+
+# Email Change Schemas
+class EmailChangeRequest(BaseModel):
+    """Schema for requesting email change - sends OTP to new email"""
+    new_email: EmailStr
+    password: str  # Require current password for security
+
+
+class EmailChangeVerify(BaseModel):
+    """Schema for verifying email change OTP"""
+    new_email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+class EmailChangeRevert(BaseModel):
+    """Schema for reverting an email change using recovery token"""
+    token: str
+
+
+# 2FA / MFA Schemas
+class TwoFactorSetupResponse(BaseModel):
+    """Response when setting up 2FA — contains secret and QR code"""
+    secret: str
+    qr_code_url: str  # otpauth:// URI for QR code generation
+    qr_code_base64: str  # Base64 encoded QR code image
+
+
+class TwoFactorEnable(BaseModel):
+    """Schema for enabling 2FA — requires a valid TOTP code to confirm setup"""
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class TwoFactorDisable(BaseModel):
+    """Schema for disabling 2FA — requires password and TOTP code"""
+    password: str
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class TwoFactorVerify(BaseModel):
+    """Schema for verifying 2FA during login"""
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6)
+    temp_token: str  # Temporary token issued after password verification
+
+
+# =============================================================================
+# Settings Schemas
+# =============================================================================
+
+class LanguageTimezoneUpdate(BaseModel):
+    """Schema for updating language and timezone preferences"""
+    language: Optional[str] = Field(None, min_length=2, max_length=10, description="ISO 639-1 language code (e.g., 'en', 'es', 'fr')")
+    timezone: Optional[str] = Field(None, max_length=50, description="IANA timezone (e.g., 'Australia/Sydney', 'America/New_York')")
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    """Schema for updating notification preferences"""
+    notify_email_enabled: Optional[bool] = None
+    notify_in_app_enabled: Optional[bool] = None
+    notify_capsule_unlock: Optional[bool] = None
+    notify_new_message: Optional[bool] = None
+    notify_subscription_updates: Optional[bool] = None
+    notify_mentor_approved: Optional[bool] = None
+
+
+class NotificationPreferencesResponse(BaseModel):
+    """Schema for notification preferences response"""
+    notify_email_enabled: bool
+    notify_in_app_enabled: bool
+    notify_capsule_unlock: bool
+    notify_new_message: bool
+    notify_subscription_updates: bool
+    notify_mentor_approved: bool
+
+    class Config:
+        from_attributes = True
+
+
+class PrivacyAcceptance(BaseModel):
+    """Schema for accepting privacy policy and/or ToS"""
+    accept_privacy_policy: bool = False
+    accept_terms_of_service: bool = False
+    confirm_age_18_plus: bool = False

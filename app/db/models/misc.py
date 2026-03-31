@@ -109,6 +109,42 @@ class FAQ(Base):
         )
 
 
+class Testimonial(Base):
+    """User testimonials for the landing page"""
+
+    __tablename__ = "testimonials"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    role = Column(String(255), nullable=True)  # e.g. "Business Coach", "Student"
+    content = Column(Text, nullable=False)
+    avatar_url = Column(String(500), nullable=True)
+    rating = Column(Integer, default=5, nullable=False)  # 1-5 stars
+    is_published = Column(Boolean, default=True, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+
+    def __repr__(self):
+        return f"<Testimonial(id={self.id}, name={self.name})>"
+
+
+class HowItWorksStep(Base):
+    """Steps for the 'How it works' section on the landing page"""
+
+    __tablename__ = "how_it_works_steps"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    step_number = Column(Integer, nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    icon_url = Column(String(500), nullable=True)
+    is_published = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+
+    def __repr__(self):
+        return f"<HowItWorksStep(id={self.id}, step={self.step_number}, title={self.title})>"
+
+
 class RequestType(str, Enum):
     """Compliance request type enumeration"""
     EXPORT = "export"

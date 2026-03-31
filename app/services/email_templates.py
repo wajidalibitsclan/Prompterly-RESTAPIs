@@ -1,2037 +1,441 @@
 """
 Professional email templates for Prompterly
-Consistent branding with landing page design
+All templates match the approved PDF designs from Lauren's 'Prompterly Automated Emails - MVP1' document.
 """
 from typing import Optional
 
-
-# Prompterly Brand Colors
 BRAND_COLORS = {
-    "primary": "#1A1A1F",        # Dark text/logo color
-    "accent": "#F3FDC1",         # Yellow accent
-    "success": "#10b981",        # Green for success actions
-    "warning": "#f59e0b",        # Amber for warnings
-    "error": "#dc2626",          # Red for errors
-    "background": "#ffffff",     # White background
-    "surface": "#f9fafb",        # Light gray surface
-    "border": "#e5e7eb",         # Border color
-    "text_primary": "#1f2937",   # Primary text
-    "text_secondary": "#6b7280", # Secondary text
-    "text_muted": "#9ca3af",     # Muted text
+    "primary": "#1A1A1F",
+    "cta": "#F97316",
+    "surface": "#f9fafb",
+    "background": "#ffffff",
+    "border": "#e5e7eb",
+    "text_primary": "#1f2937",
+    "text_secondary": "#6b7280",
+    "text_muted": "#9ca3af",
 }
 
 
-def get_base_template(
-    content: str,
-    preview_text: str = "",
-    show_footer_links: bool = True
-) -> str:
-    """
-    Base email template with Prompterly branding
+def _cta(text: str, url: str) -> str:
+    return f'<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="padding:5px 0 25px 0;"><a href="{url}" style="display:inline-block;padding:14px 32px;background-color:{BRAND_COLORS["cta"]};color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;font-size:15px;">{text}</a></td></tr></table>'
 
-    Args:
-        content: Main email content HTML
-        preview_text: Email preview text (shown in inbox)
-        show_footer_links: Whether to show social/website links
 
-    Returns:
-        Complete HTML email
-    """
+def _p(text: str, bold: bool = False) -> str:
+    w = "600" if bold else "400"
+    c = BRAND_COLORS["text_primary"] if bold else BRAND_COLORS["text_secondary"]
+    return f'<p style="margin:0 0 15px 0;font-size:15px;font-weight:{w};color:{c};line-height:1.6;">{text}</p>'
+
+
+def _detail(label: str, value: str) -> str:
+    return f'<p style="margin:0 0 3px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>{label}:</strong> {value}</p>'
+
+
+def _footer() -> str:
+    return f'<p style="margin:20px 0 0 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};font-weight:600;">Prompterly Support</p>'
+
+
+def _support(prefix: str = "If you have any questions, please view our") -> str:
+    return f'<p style="margin:0 0 0 0;font-size:13px;color:{BRAND_COLORS["text_muted"]};line-height:1.6;">{prefix} <a href="https://prompterly.ai/support" style="color:{BRAND_COLORS["primary"]};">support page</a>.</p>'
+
+
+def _contact() -> str:
+    return f'<p style="margin:0 0 0 0;font-size:13px;color:{BRAND_COLORS["text_muted"]};line-height:1.6;">If you need help, you can contact us at <a href="mailto:support@prompterly.ai" style="color:{BRAND_COLORS["primary"]};">support@prompterly.ai</a>.</p>'
+
+
+def _support_link() -> str:
+    return f'<a href="https://prompterly.ai/support" style="color:{BRAND_COLORS["text_secondary"]};font-size:13px;">https://prompterly.ai/support</a>'
+
+
+def get_base_template(content: str, preview_text: str = "", show_footer_links: bool = True) -> str:
     footer_links = ""
     if show_footer_links:
-        footer_links = f"""
-        <tr>
-            <td style="padding: 0 0 20px 0; text-align: center;">
-                <a href="https://prompterly.ai"
-                   style="color: {BRAND_COLORS['text_secondary']}; text-decoration: none; margin: 0 10px; font-size: 13px;">
-                    Website
-                </a>
-                <span style="color: {BRAND_COLORS['border']};">|</span>
-                <a href="https://prompterly.ai/about"
-                   style="color: {BRAND_COLORS['text_secondary']}; text-decoration: none; margin: 0 10px; font-size: 13px;">
-                    About Us
-                </a>
-                <span style="color: {BRAND_COLORS['border']};">|</span>
-                <a href="https://prompterly.ai/contact"
-                   style="color: {BRAND_COLORS['text_secondary']}; text-decoration: none; margin: 0 10px; font-size: 13px;">
-                    Contact
-                </a>
-            </td>
-        </tr>
-        """
+        footer_links = f'''<tr><td style="padding:0 0 20px 0;text-align:center;"><a href="https://prompterly.ai" style="color:{BRAND_COLORS["text_secondary"]};text-decoration:none;margin:0 10px;font-size:13px;">Website</a><span style="color:{BRAND_COLORS["border"]};">|</span><a href="https://prompterly.ai/about" style="color:{BRAND_COLORS["text_secondary"]};text-decoration:none;margin:0 10px;font-size:13px;">About Us</a><span style="color:{BRAND_COLORS["border"]};">|</span><a href="https://prompterly.ai/contact" style="color:{BRAND_COLORS["text_secondary"]};text-decoration:none;margin:0 10px;font-size:13px;">Contact</a></td></tr>'''
+    return f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Prompterly</title></head><body style="margin:0;padding:0;background-color:{BRAND_COLORS["surface"]};font-family:'Inter','Segoe UI',Arial,sans-serif;"><div style="display:none;max-height:0;overflow:hidden;">{preview_text}</div><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:{BRAND_COLORS["surface"]};"><tr><td style="padding:40px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;margin:0 auto;"><tr><td style="text-align:center;padding-bottom:30px;"><img src="https://prompterly.bitsclan.us/images/black-logo.png" alt="Prompterly" width="180" style="display:inline-block;max-width:180px;height:auto;"></td></tr><tr><td><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:{BRAND_COLORS["background"]};border-radius:16px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);"><tr><td style="padding:40px;">{content}</td></tr></table></td></tr><tr><td style="padding-top:30px;"><table role="presentation" cellpadding="0" cellspacing="0" width="100%">{footer_links}<tr><td style="text-align:center;padding:10px 0;"><p style="margin:0;font-size:12px;color:{BRAND_COLORS["text_muted"]};">&copy; 2025 Prompterly. All rights reserved.</p></td></tr></table></td></tr></table></td></tr></table></body></html>'''
 
-    return f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>Prompterly</title>
-    <!--[if mso]>
-    <style type="text/css">
-        body, table, td {{font-family: Arial, Helvetica, sans-serif !important;}}
-    </style>
-    <![endif]-->
-</head>
-<body style="margin: 0; padding: 0; background-color: {BRAND_COLORS['surface']}; font-family: 'Inter', 'Segoe UI', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-    <!-- Preview Text -->
-    <div style="display: none; max-height: 0; overflow: hidden;">
-        {preview_text}
-    </div>
 
-    <!-- Email Container -->
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: {BRAND_COLORS['surface']};">
-        <tr>
-            <td style="padding: 40px 20px;">
-                <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto;">
-
-                    <!-- Logo Header -->
-                    <tr>
-                        <td style="text-align: center; padding-bottom: 30px;">
-                            <img src="https://prompterly.bitsclan.us/images/black-logo.png"
-                                 alt="Prompterly"
-                                 width="180"
-                                 style="display: inline-block; max-width: 180px; height: auto;">
-                        </td>
-                    </tr>
-
-                    <!-- Main Content Card -->
-                    <tr>
-                        <td>
-                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-                                   style="background-color: {BRAND_COLORS['background']}; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
-                                <tr>
-                                    <td style="padding: 40px;">
-                                        {content}
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-
-                    <!-- Footer -->
-                    <tr>
-                        <td style="padding-top: 30px;">
-                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                                {footer_links}
-                                <tr>
-                                    <td style="text-align: center; padding: 10px 0;">
-                                        <p style="margin: 0; font-size: 12px; color: {BRAND_COLORS['text_muted']};">
-                                            &copy; 2025 Prompterly. All rights reserved.
-                                        </p>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="text-align: center; padding: 5px 0;">
-                                        <p style="margin: 0; font-size: 11px; color: {BRAND_COLORS['text_muted']};">
-                                            You're receiving this email because you signed up for Prompterly.
-                                        </p>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-
-                </table>
-            </td>
-        </tr>
-    </table>
-</body>
-</html>
-"""
-
+# ── EMAIL #1 — Account Verification Code ─────────────────────────────────────
+# Subject: XXXXXX is your prompterly verification code
 
 def get_otp_email_template(name: str, otp: str) -> tuple[str, str]:
-    """
-    Generate OTP verification email
+    plain_text = f"Hi {name},\n\nYou're almost in.\nHere's your verification code:\n\n{otp}\n\nEnter this to continue setting up your prompterly account. For your security, don't forward this email or share this code with anyone.\n\nThis code will expire in 10 minutes.\n\nPrompterly Support\nhttps://prompterly.ai/support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">Sign in to prompterly</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p("You're almost in.")}
+{_p("Here's your verification code:")}
+<p style="margin:0 0 20px 0;font-size:36px;font-weight:800;color:{BRAND_COLORS["text_primary"]};letter-spacing:4px;">{otp}</p>
+<p style="margin:0 0 10px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">Enter this to continue setting up your prompterly account. For your security, don't forward this email or share this code with anyone.</p>
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">This code will expire in 10 minutes.</p>
+{_footer()}
+{_support_link()}'''
+    return plain_text, get_base_template(content, f"{otp} is your prompterly verification code")
 
-    Args:
-        name: User's name
-        otp: 6-digit OTP code
 
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Welcome to Prompterly! To complete your registration, please use the verification code below:
-
-Your verification code: {otp}
-
-This code will expire in 10 minutes.
-
-If you didn't create an account with Prompterly, you can safely ignore this email.
-
-Need help? Contact us at support@prompterly.ai
-
-Best regards,
-The Prompterly Team
-"""
-
-    content = f"""
-<!-- Greeting -->
-<h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    Verify Your Email
-</h1>
-<p style="margin: 0 0 25px 0; font-size: 16px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.6;">
-    Hi {name}, welcome to Prompterly!
-</p>
-
-<!-- Message -->
-<p style="margin: 0 0 25px 0; font-size: 15px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    To complete your registration, please enter the following verification code:
-</p>
-
-<!-- OTP Code Box -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 25px 0;">
-            <div style="display: inline-block; background: linear-gradient(135deg, {BRAND_COLORS['accent']} 0%, #e8f5c8 100%);
-                        padding: 20px 40px; border-radius: 12px; border: 2px dashed {BRAND_COLORS['primary']};">
-                <span style="font-size: 36px; font-weight: 800; letter-spacing: 12px; color: {BRAND_COLORS['primary']};
-                             font-family: 'Monaco', 'Consolas', monospace;">
-                    {otp}
-                </span>
-            </div>
-        </td>
-    </tr>
-</table>
-
-<!-- Expiry Notice -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 15px 0 25px 0;">
-            <p style="margin: 0; font-size: 14px; color: {BRAND_COLORS['text_secondary']};">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align: middle; margin-right: 6px;">
-                    <circle cx="12" cy="12" r="10" stroke="{BRAND_COLORS['warning']}" stroke-width="2"/>
-                    <path d="M12 6v6l4 2" stroke="{BRAND_COLORS['warning']}" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-                This code expires in <strong style="color: {BRAND_COLORS['warning']};">10 minutes</strong>
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Security Notice -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6;">
-    <strong>Didn't request this?</strong> If you didn't create an account with Prompterly,
-    you can safely ignore this email. Someone may have entered your email by mistake.
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Your Prompterly verification code is {otp}. This code expires in 10 minutes."
-    )
-
-    return plain_text, html
-
+# ── EMAIL #2 — Welcome / Account Registration ────────────────────────────────
+# Subject: Welcome to prompterly
 
 def get_welcome_email_template(name: str, dashboard_url: str) -> tuple[str, str]:
-    """
-    Generate welcome email after successful registration
+    plain_text = f"Hi {name},\n\nYour Prompterly account is now set up and ready.\n\nWhen you log in, you'll land in your dashboard where you'll see the Coaching Lounge(s) you've subscribed to.\n\nTo get started, simply click \"Enter Lounge\" and begin.\n\nYou can also explore and browse other Coaching Lounges available to you at any time.\n\nEach lounge is trained around a trusted mentor's perspective, giving you direct access to their thinking, guidance and support whenever you need it.\n\nGo to dashboard: {dashboard_url}\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};font-style:italic;">You're in!</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p("Your Prompterly account is now set up and ready.")}
+{_p("When you log in, you'll land in your dashboard where you'll see the Coaching Lounge(s) you've subscribed to.")}
+{_p('To get started, simply click <strong>"Enter Lounge"</strong> and begin.')}
+{_p("You can also explore and browse other Coaching Lounges available to you at any time.")}
+{_p("Each lounge is trained around a trusted mentor's perspective, giving you direct access to their thinking, guidance and support whenever you need it.")}
+{_cta("Go to dashboard", dashboard_url)}
+{_support()}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Your Prompterly account is now set up and ready")
 
-    Args:
-        name: User's name
-        dashboard_url: URL to user dashboard
 
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
+# ── EMAIL #3 — Email Change Confirmation (sent to NEW email) ─────────────────
+# Subject: Your account details have been updated
 
-Welcome to Prompterly! Your account has been successfully created.
+def get_email_change_confirmation_template(name: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nThis email address has been successfully linked to your Prompterly account.\n\nIf you made this change, no further action is needed.\n\nIf this wasn't you, please contact us immediately at support@prompterly.ai so we can help secure your account.\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p("This email address has been successfully linked to your Prompterly account.")}
+{_p("If you made this change, no further action is needed.")}
+<p style="margin:0 0 25px 0;font-size:15px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If this wasn't you, please contact us immediately at <a href="mailto:support@prompterly.ai" style="color:{BRAND_COLORS["primary"]};font-weight:600;">support@prompterly.ai</a> so we can help secure your account.</p>
+{_support("If you have any other questions, please view our")}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Your account details have been updated")
 
-You're now part of a community that's transforming how people learn and grow through AI-powered coaching.
 
-Here's what you can do next:
+# ── EMAIL #4 — Email Change Alert (sent to OLD email) ────────────────────────
+# Subject: Important: Your account details were updated
 
-1. Explore Lounges - Discover coaching spaces tailored to your interests
-2. Meet Your AI Coach - Get personalized guidance anytime, anywhere
-3. Take Notes - Capture insights and track your progress
-4. Join the Community - Connect with mentors and fellow learners
+def get_email_change_alert_template(name: str, secure_account_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nWe noticed that the email address linked to your Prompterly account was recently changed.\n\nIf you made this update, you can ignore this message.\n\nIf this wasn't you, please secure your account immediately:\n{secure_account_url}\n\nThis link will allow you to review the change and regain control of your account.\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p("We noticed that the email address linked to your prompterly account was recently changed.")}
+{_p("If you made this update, you can ignore this message.")}
+{_p("If this wasn't you, please secure your account immediately.")}
+{_cta("Secure my account", secure_account_url)}
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">This link will allow you to review the change and regain control of your account.</p>
+{_support("If you need support, please view our")}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Important: Your account details were updated")
 
-Get started: {dashboard_url}
 
-We're excited to have you on board!
-
-Best regards,
-The Prompterly Team
-
-P.S. Have questions? Reply to this email or visit our Help Center.
-"""
-
-    content = f"""
-<!-- Welcome Header with Accent Background -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background: linear-gradient(135deg, {BRAND_COLORS['accent']} 0%, #e8f5c8 100%);
-              border-radius: 12px; margin-bottom: 30px;">
-    <tr>
-        <td style="padding: 30px; text-align: center;">
-            <h1 style="margin: 0 0 10px 0; font-size: 28px; font-weight: 800; color: {BRAND_COLORS['primary']};">
-                Welcome to Prompterly!
-            </h1>
-            <p style="margin: 0; font-size: 16px; color: {BRAND_COLORS['text_primary']};">
-                Your journey to AI-powered growth starts now
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Personal Greeting -->
-<p style="margin: 0 0 20px 0; font-size: 16px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Hi {name},
-</p>
-<p style="margin: 0 0 30px 0; font-size: 15px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-    Your account has been successfully created. You're now part of a growing community that's
-    transforming how people learn and grow through AI-powered coaching.
-</p>
-
-<!-- What's Next Section -->
-<h2 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    Here's what you can do next:
-</h2>
-
-<!-- Feature Cards -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <!-- Feature 1 -->
-    <tr>
-        <td style="padding: 12px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-                   style="background-color: {BRAND_COLORS['surface']}; border-radius: 10px; border-left: 4px solid {BRAND_COLORS['accent']};">
-                <tr>
-                    <td style="padding: 16px 20px;">
-                        <table role="presentation" cellpadding="0" cellspacing="0">
-                            <tr>
-                                <td style="vertical-align: top; padding-right: 15px;">
-                                    <div style="width: 40px; height: 40px; background-color: {BRAND_COLORS['accent']};
-                                                border-radius: 10px; text-align: center; line-height: 40px; font-size: 20px;">
-                                        🎯
-                                    </div>
-                                </td>
-                                <td style="vertical-align: top;">
-                                    <h3 style="margin: 0 0 5px 0; font-size: 15px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                                        Explore Lounges
-                                    </h3>
-                                    <p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.5;">
-                                        Discover coaching spaces tailored to your interests and goals
-                                    </p>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-
-    <!-- Feature 2 -->
-    <tr>
-        <td style="padding: 12px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-                   style="background-color: {BRAND_COLORS['surface']}; border-radius: 10px; border-left: 4px solid {BRAND_COLORS['success']};">
-                <tr>
-                    <td style="padding: 16px 20px;">
-                        <table role="presentation" cellpadding="0" cellspacing="0">
-                            <tr>
-                                <td style="vertical-align: top; padding-right: 15px;">
-                                    <div style="width: 40px; height: 40px; background-color: #d1fae5;
-                                                border-radius: 10px; text-align: center; line-height: 40px; font-size: 20px;">
-                                        🤖
-                                    </div>
-                                </td>
-                                <td style="vertical-align: top;">
-                                    <h3 style="margin: 0 0 5px 0; font-size: 15px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                                        Meet Your AI Coach
-                                    </h3>
-                                    <p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.5;">
-                                        Get personalized guidance and support anytime, anywhere
-                                    </p>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-
-    <!-- Feature 3 -->
-    <tr>
-        <td style="padding: 12px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-                   style="background-color: {BRAND_COLORS['surface']}; border-radius: 10px; border-left: 4px solid #8b5cf6;">
-                <tr>
-                    <td style="padding: 16px 20px;">
-                        <table role="presentation" cellpadding="0" cellspacing="0">
-                            <tr>
-                                <td style="vertical-align: top; padding-right: 15px;">
-                                    <div style="width: 40px; height: 40px; background-color: #ede9fe;
-                                                border-radius: 10px; text-align: center; line-height: 40px; font-size: 20px;">
-                                        📝
-                                    </div>
-                                </td>
-                                <td style="vertical-align: top;">
-                                    <h3 style="margin: 0 0 5px 0; font-size: 15px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                                        Take Notes & Track Progress
-                                    </h3>
-                                    <p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.5;">
-                                        Capture insights and monitor your growth journey
-                                    </p>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- CTA Button -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 35px 0 25px 0;">
-            <a href="{dashboard_url}"
-               style="display: inline-block; background-color: {BRAND_COLORS['primary']}; color: #ffffff;
-                      padding: 16px 40px; font-size: 16px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px; box-shadow: 0 4px 14px 0 rgba(26, 26, 31, 0.3);">
-                Go to My Dashboard →
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 20px 0;">
-
-<!-- Help Section -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 10px 0;">
-            <p style="margin: 0; font-size: 14px; color: {BRAND_COLORS['text_secondary']};">
-                Have questions? We're here to help!
-            </p>
-            <p style="margin: 10px 0 0 0; font-size: 14px;">
-                <a href="mailto:support@prompterly.ai"
-                   style="color: {BRAND_COLORS['primary']}; text-decoration: none; font-weight: 500;">
-                    support@prompterly.ai
-                </a>
-            </p>
-        </td>
-    </tr>
-</table>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Welcome to Prompterly, {name}! Your account is ready. Start exploring AI-powered coaching today."
-    )
-
-    return plain_text, html
-
+# ── EMAIL #5 — Password Reset Request ────────────────────────────────────────
+# Subject: Reset your password
 
 def get_password_reset_otp_template(name: str, otp: str) -> tuple[str, str]:
-    """
-    Generate password reset OTP email
-
-    Args:
-        name: User's name
-        otp: 6-digit OTP code
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-We received a request to reset your Prompterly password.
-
-Your password reset code: {otp}
-
-This code will expire in 10 minutes.
-
-If you didn't request a password reset, please ignore this email. Your password will remain unchanged.
-
-For security, never share this code with anyone.
-
-Best regards,
-The Prompterly Team
-"""
-
-    content = f"""
-<!-- Header -->
-<h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    Reset Your Password
-</h1>
-<p style="margin: 0 0 25px 0; font-size: 16px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.6;">
-    Hi {name}, we received a request to reset your password.
-</p>
-
-<!-- Message -->
-<p style="margin: 0 0 25px 0; font-size: 15px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Use the following code to reset your password:
-</p>
-
-<!-- OTP Code Box -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 25px 0;">
-            <div style="display: inline-block; background-color: #fef2f2;
-                        padding: 20px 40px; border-radius: 12px; border: 2px dashed {BRAND_COLORS['error']};">
-                <span style="font-size: 36px; font-weight: 800; letter-spacing: 12px; color: {BRAND_COLORS['error']};
-                             font-family: 'Monaco', 'Consolas', monospace;">
-                    {otp}
-                </span>
-            </div>
-        </td>
-    </tr>
-</table>
-
-<!-- Expiry Notice -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 15px 0 25px 0;">
-            <p style="margin: 0; font-size: 14px; color: {BRAND_COLORS['text_secondary']};">
-                This code expires in <strong style="color: {BRAND_COLORS['warning']};">10 minutes</strong>
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Security Notice -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #fef3c7; border-radius: 8px; margin-top: 10px;">
-    <tr>
-        <td style="padding: 16px 20px;">
-            <p style="margin: 0; font-size: 13px; color: #92400e; line-height: 1.6;">
-                <strong>⚠️ Security Tip:</strong> Never share this code with anyone.
-                Prompterly will never ask for your password or verification codes.
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Didn't Request Notice -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6;">
-    <strong>Didn't request this?</strong> If you didn't request a password reset,
-    please ignore this email. Your password will remain unchanged.
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Your Prompterly password reset code is {otp}. This code expires in 10 minutes."
-    )
-
-    return plain_text, html
-
-
-def get_user_credentials_email_template(
-    name: str,
-    email: str,
-    password: str,
-    login_url: str
-) -> tuple[str, str]:
-    """
-    Generate credentials email for user created by admin
-
-    Args:
-        name: User's name
-        email: User's email (login username)
-        password: Temporary password
-        login_url: URL to login page
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Welcome to Prompterly! An account has been created for you.
-
-Here are your login credentials:
-
-Email: {email}
-Temporary Password: {password}
-
-Please login at: {login_url}
-
-For security, we recommend changing your password after your first login.
-
-If you have any questions, please contact our support team.
-
-Best regards,
-The Prompterly Team
-"""
-
-    content = f"""
-<!-- Header -->
-<h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    Welcome to Prompterly!
-</h1>
-<p style="margin: 0 0 25px 0; font-size: 16px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.6;">
-    Hi {name}, an account has been created for you.
-</p>
-
-<!-- Credentials Box -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 12px; border: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px;">
-            <h3 style="margin: 0 0 20px 0; font-size: 16px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                Your Login Credentials
-            </h3>
-
-            <!-- Email -->
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 15px;">
-                <tr>
-                    <td style="width: 100px; font-size: 14px; color: {BRAND_COLORS['text_secondary']}; padding: 8px 0;">
-                        Email:
-                    </td>
-                    <td style="font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']}; padding: 8px 0;">
-                        {email}
-                    </td>
-                </tr>
-            </table>
-
-            <!-- Password -->
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                <tr>
-                    <td style="width: 100px; font-size: 14px; color: {BRAND_COLORS['text_secondary']}; padding: 8px 0;">
-                        Password:
-                    </td>
-                    <td style="padding: 8px 0;">
-                        <code style="background-color: {BRAND_COLORS['accent']}; padding: 8px 16px; border-radius: 6px;
-                                     font-size: 15px; font-weight: 700; color: {BRAND_COLORS['primary']}; letter-spacing: 1px;">
-                            {password}
-                        </code>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- CTA Button -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 20px 0;">
-            <a href="{login_url}"
-               style="display: inline-block; background-color: {BRAND_COLORS['primary']}; color: #ffffff;
-                      padding: 16px 40px; font-size: 16px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px; box-shadow: 0 4px 14px 0 rgba(26, 26, 31, 0.3);">
-                Login to Your Account →
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Security Notice -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #fef3c7; border-radius: 8px; margin-top: 20px;">
-    <tr>
-        <td style="padding: 16px 20px;">
-            <p style="margin: 0; font-size: 13px; color: #92400e; line-height: 1.6;">
-                <strong>🔒 Security Tip:</strong> For your security, please change your password
-                after your first login. Never share your credentials with anyone.
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Help Section -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6; text-align: center;">
-    Need help? Contact us at <a href="mailto:support@prompterly.ai" style="color: {BRAND_COLORS['primary']};">support@prompterly.ai</a>
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Welcome to Prompterly, {name}! Your account credentials are ready."
-    )
-
-    return plain_text, html
-
-
-def get_mentor_welcome_email_template(
-    name: str,
-    prompterly_url: str
-) -> tuple[str, str]:
-    """
-    Generate welcome email for mentor created by admin
-    (No credentials since there's no mentor portal)
-
-    Args:
-        name: Mentor's name
-        prompterly_url: Main Prompterly website URL
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Congratulations! You've been selected to join Prompterly as a Mentor!
-
-We're thrilled to have you on board. As a Prompterly Mentor, you'll have the opportunity to:
-
-- Share your expertise with learners worldwide
-- Build your personal coaching lounge
-- Connect with motivated individuals seeking guidance
-- Make a meaningful impact through AI-powered coaching
-
-What happens next?
-
-Our team will be in touch shortly to guide you through the onboarding process and help you set up your coaching lounge.
-
-In the meantime, feel free to explore Prompterly: {prompterly_url}
-
-We're excited to partner with you on this journey!
-
-Best regards,
-The Prompterly Team
-
-Questions? Reach out to us at mentors@prompterly.ai
-"""
-
-    content = f"""
-<!-- Celebration Header -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background: linear-gradient(135deg, {BRAND_COLORS['accent']} 0%, #e8f5c8 100%);
-              border-radius: 12px; margin-bottom: 30px;">
-    <tr>
-        <td style="padding: 30px; text-align: center;">
-            <div style="font-size: 48px; margin-bottom: 10px;">🎉</div>
-            <h1 style="margin: 0 0 10px 0; font-size: 26px; font-weight: 800; color: {BRAND_COLORS['primary']};">
-                Welcome to Prompterly, Mentor!
-            </h1>
-            <p style="margin: 0; font-size: 16px; color: {BRAND_COLORS['text_primary']};">
-                You've been selected to join our mentorship program
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Personal Greeting -->
-<p style="margin: 0 0 20px 0; font-size: 16px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Hi {name},
-</p>
-<p style="margin: 0 0 30px 0; font-size: 15px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-    Congratulations! We're thrilled to welcome you to the Prompterly mentor community.
-    Your expertise and passion will help transform how people learn and grow.
-</p>
-
-<!-- Benefits Section -->
-<h2 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    As a Prompterly Mentor, you'll be able to:
-</h2>
-
-<!-- Benefit Cards -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <!-- Benefit 1 -->
-    <tr>
-        <td style="padding: 10px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-                   style="background-color: {BRAND_COLORS['surface']}; border-radius: 10px; border-left: 4px solid {BRAND_COLORS['success']};">
-                <tr>
-                    <td style="padding: 16px 20px;">
-                        <table role="presentation" cellpadding="0" cellspacing="0">
-                            <tr>
-                                <td style="vertical-align: top; padding-right: 15px;">
-                                    <div style="width: 36px; height: 36px; background-color: #d1fae5;
-                                                border-radius: 8px; text-align: center; line-height: 36px; font-size: 18px;">
-                                        🌍
-                                    </div>
-                                </td>
-                                <td style="vertical-align: top;">
-                                    <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                                        Share Your Expertise Globally
-                                    </h3>
-                                    <p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.4;">
-                                        Reach learners worldwide with your AI-powered coaching lounge
-                                    </p>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-
-    <!-- Benefit 2 -->
-    <tr>
-        <td style="padding: 10px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-                   style="background-color: {BRAND_COLORS['surface']}; border-radius: 10px; border-left: 4px solid #8b5cf6;">
-                <tr>
-                    <td style="padding: 16px 20px;">
-                        <table role="presentation" cellpadding="0" cellspacing="0">
-                            <tr>
-                                <td style="vertical-align: top; padding-right: 15px;">
-                                    <div style="width: 36px; height: 36px; background-color: #ede9fe;
-                                                border-radius: 8px; text-align: center; line-height: 36px; font-size: 18px;">
-                                        🏠
-                                    </div>
-                                </td>
-                                <td style="vertical-align: top;">
-                                    <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                                        Build Your Coaching Lounge
-                                    </h3>
-                                    <p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.4;">
-                                        Create a personalized space for your coaching content and interactions
-                                    </p>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-
-    <!-- Benefit 3 -->
-    <tr>
-        <td style="padding: 10px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-                   style="background-color: {BRAND_COLORS['surface']}; border-radius: 10px; border-left: 4px solid {BRAND_COLORS['accent']};">
-                <tr>
-                    <td style="padding: 16px 20px;">
-                        <table role="presentation" cellpadding="0" cellspacing="0">
-                            <tr>
-                                <td style="vertical-align: top; padding-right: 15px;">
-                                    <div style="width: 36px; height: 36px; background-color: {BRAND_COLORS['accent']};
-                                                border-radius: 8px; text-align: center; line-height: 36px; font-size: 18px;">
-                                        💡
-                                    </div>
-                                </td>
-                                <td style="vertical-align: top;">
-                                    <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                                        Make a Meaningful Impact
-                                    </h3>
-                                    <p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.4;">
-                                        Help individuals achieve their goals through AI-enhanced guidance
-                                    </p>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- What's Next Section -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #eff6ff; border-radius: 12px; margin: 30px 0;">
-    <tr>
-        <td style="padding: 25px;">
-            <h3 style="margin: 0 0 12px 0; font-size: 16px; font-weight: 600; color: #1e40af;">
-                📅 What happens next?
-            </h3>
-            <p style="margin: 0; font-size: 14px; color: #3b82f6; line-height: 1.6;">
-                Our team will reach out within the next few days to guide you through
-                the onboarding process and help you set up your coaching lounge.
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- CTA Button -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 15px 0;">
-            <a href="{prompterly_url}"
-               style="display: inline-block; background-color: {BRAND_COLORS['primary']}; color: #ffffff;
-                      padding: 14px 35px; font-size: 15px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px; box-shadow: 0 4px 14px 0 rgba(26, 26, 31, 0.3);">
-                Explore Prompterly →
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Contact Section -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6; text-align: center;">
-    Questions about the mentor program?<br>
-    Reach out to us at <a href="mailto:mentors@prompterly.ai" style="color: {BRAND_COLORS['primary']};">mentors@prompterly.ai</a>
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Congratulations {name}! You've been selected to join Prompterly as a Mentor."
-    )
-
-    return plain_text, html
-
-
-def get_contact_confirmation_email_template(
-    name: str,
-    subject: str
-) -> tuple[str, str]:
-    """
-    Generate contact form confirmation email for user
-
-    Args:
-        name: User's name
-        subject: Subject of their inquiry
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Thank you for reaching out to Prompterly!
-
-We've received your message regarding: "{subject}"
-
-Our team will review your inquiry and get back to you within 24-48 hours.
-
-In the meantime, feel free to explore our coaching lounges and discover AI-powered mentorship.
-
-Best regards,
-The Prompterly Team
-
-Need urgent assistance? Email us at support@prompterly.ai
-"""
-
-    content = f"""
-<!-- Header -->
-<h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    We've Received Your Message!
-</h1>
-<p style="margin: 0 0 25px 0; font-size: 16px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.6;">
-    Hi {name}, thank you for reaching out to Prompterly.
-</p>
-
-<!-- Confirmation Box -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #ecfdf5; border-radius: 12px; border: 1px solid #a7f3d0; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 15px;">
-                        <div style="width: 44px; height: 44px; background-color: {BRAND_COLORS['success']};
-                                    border-radius: 50%; text-align: center; line-height: 44px; font-size: 22px; color: white;">
-                            ✓
-                        </div>
-                    </td>
-                    <td style="vertical-align: top;">
-                        <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600; color: #065f46;">
-                            Message Received Successfully
-                        </h3>
-                        <p style="margin: 0; font-size: 14px; color: #047857; line-height: 1.5;">
-                            Your inquiry about "<strong>{subject}</strong>" has been submitted.
-                        </p>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- Timeline -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="padding: 15px 0;">
-            <p style="margin: 0; font-size: 15px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-                <strong>What happens next?</strong>
-            </p>
-            <p style="margin: 10px 0 0 0; font-size: 14px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-                Our team will review your message and respond within <strong>24-48 hours</strong>.
-                We appreciate your patience and look forward to assisting you.
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Support Section -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center;">
-            <p style="margin: 0 0 10px 0; font-size: 14px; color: {BRAND_COLORS['text_secondary']};">
-                Need urgent assistance?
-            </p>
-            <a href="mailto:support@prompterly.ai"
-               style="display: inline-block; background-color: {BRAND_COLORS['surface']}; color: {BRAND_COLORS['text_primary']};
-                      padding: 12px 30px; font-size: 14px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px; border: 1px solid {BRAND_COLORS['border']};">
-                Email Support
-            </a>
-        </td>
-    </tr>
-</table>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Thanks for contacting Prompterly, {name}! We've received your message and will respond within 24-48 hours."
-    )
-
-    return plain_text, html
-
-
-def get_contact_admin_notification_template(
-    name: str,
-    email: str,
-    subject: str,
-    message: str,
-    ip_address: str,
-    submitted_at: str,
-    message_id: int
-) -> tuple[str, str]:
-    """
-    Generate contact form notification email for admin
-
-    Args:
-        name: Sender's name
-        email: Sender's email
-        subject: Message subject
-        message: Message content
-        ip_address: Sender's IP address
-        submitted_at: Submission timestamp
-        message_id: Database message ID
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-New Contact Form Submission
-
-From: {name}
-Email: {email}
-Subject: {subject}
-
-Message:
-{message}
-
----
-IP Address: {ip_address}
-Submitted at: {submitted_at}
-Message ID: {message_id}
-"""
-
-    content = f"""
-<!-- Header -->
-<h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    New Contact Form Submission
-</h1>
-<p style="margin: 0 0 25px 0; font-size: 14px; color: {BRAND_COLORS['text_secondary']};">
-    A new message has been received through the contact form.
-</p>
-
-<!-- Sender Info Card -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 12px; margin-bottom: 20px;">
-    <tr>
-        <td style="padding: 20px;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                <tr>
-                    <td style="padding: 8px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 13px; color: {BRAND_COLORS['text_muted']}; display: inline-block; width: 80px;">From:</span>
-                        <span style="font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">{name}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 13px; color: {BRAND_COLORS['text_muted']}; display: inline-block; width: 80px;">Email:</span>
-                        <a href="mailto:{email}" style="font-size: 14px; color: {BRAND_COLORS['primary']}; text-decoration: none;">{email}</a>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0;">
-                        <span style="font-size: 13px; color: {BRAND_COLORS['text_muted']}; display: inline-block; width: 80px;">Subject:</span>
-                        <span style="font-size: 14px; font-weight: 500; color: {BRAND_COLORS['text_primary']};">{subject}</span>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- Message Content -->
-<h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-    Message:
-</h3>
-<div style="background-color: #ffffff; border: 1px solid {BRAND_COLORS['border']}; border-radius: 8px;
-            padding: 20px; font-size: 14px; color: {BRAND_COLORS['text_primary']}; line-height: 1.7;
-            white-space: pre-wrap; word-wrap: break-word;">
-{message}
-</div>
-
-<!-- Reply Button -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 25px 0;">
-            <a href="mailto:{email}?subject=Re: {subject}"
-               style="display: inline-block; background-color: {BRAND_COLORS['primary']}; color: #ffffff;
-                      padding: 12px 30px; font-size: 14px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px;">
-                Reply to {name}
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Metadata -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 8px;">
-    <tr>
-        <td style="padding: 15px;">
-            <p style="margin: 0; font-size: 12px; color: {BRAND_COLORS['text_muted']};">
-                <strong>IP Address:</strong> {ip_address}<br>
-                <strong>Submitted:</strong> {submitted_at}<br>
-                <strong>Message ID:</strong> #{message_id}
-            </p>
-        </td>
-    </tr>
-</table>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"New contact from {name}: {subject}",
-        show_footer_links=False
-    )
-
-    return plain_text, html
-
-
-def get_subscription_confirmation_email_template(
-    name: str,
-    lounge_name: str,
-    mentor_name: str,
-    plan_type: str,
-    price: str,
-    next_billing_date: str,
-    dashboard_url: str
-) -> tuple[str, str]:
-    """
-    Generate subscription confirmation email when user subscribes to a lounge
-
-    Args:
-        name: User's name
-        lounge_name: Name of the subscribed lounge
-        mentor_name: Name of the lounge mentor
-        plan_type: Subscription plan type (monthly/yearly)
-        price: Subscription price
-        next_billing_date: Next billing date
-        dashboard_url: URL to user dashboard
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Welcome to {lounge_name}!
-
-Your subscription has been successfully activated. Here are your subscription details:
-
-Lounge: {lounge_name}
-Mentor: {mentor_name}
-Plan: {plan_type}
-Price: {price}
-Next Billing Date: {next_billing_date}
-
-You now have full access to:
-- AI-powered coaching sessions
-- Exclusive lounge resources
-- Direct mentorship content
-- Community features
-
-Access your lounge: {dashboard_url}
-
-Thank you for subscribing!
-
-Best regards,
-The Prompterly Team
-"""
-
-    content = f"""
-<!-- Success Header -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
-              border-radius: 12px; margin-bottom: 30px;">
-    <tr>
-        <td style="padding: 30px; text-align: center;">
-            <div style="width: 60px; height: 60px; background-color: {BRAND_COLORS['success']};
-                        border-radius: 50%; margin: 0 auto 15px; text-align: center; line-height: 60px;">
-                <span style="font-size: 28px; color: white;">✓</span>
-            </div>
-            <h1 style="margin: 0 0 10px 0; font-size: 26px; font-weight: 800; color: #065f46;">
-                Subscription Confirmed!
-            </h1>
-            <p style="margin: 0; font-size: 16px; color: #047857;">
-                Welcome to {lounge_name}
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Personal Greeting -->
-<p style="margin: 0 0 20px 0; font-size: 16px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Hi {name},
-</p>
-<p style="margin: 0 0 25px 0; font-size: 15px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-    Your subscription to <strong>{lounge_name}</strong> has been successfully activated.
-    You now have full access to all the amazing content and features.
-</p>
-
-<!-- Subscription Details Card -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 12px; border: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px;">
-            <h3 style="margin: 0 0 20px 0; font-size: 16px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                Subscription Details
-            </h3>
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Lounge:</span>
-                        <span style="font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">{lounge_name}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Mentor:</span>
-                        <span style="font-size: 14px; font-weight: 500; color: {BRAND_COLORS['text_primary']};">{mentor_name}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Plan:</span>
-                        <span style="font-size: 14px; font-weight: 600; color: {BRAND_COLORS['success']}; text-transform: capitalize;">{plan_type}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Price:</span>
-                        <span style="font-size: 14px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">{price}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0;">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Next Billing:</span>
-                        <span style="font-size: 14px; font-weight: 500; color: {BRAND_COLORS['text_primary']};">{next_billing_date}</span>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- What You Get Section -->
-<h2 style="margin: 30px 0 20px 0; font-size: 18px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    What's included in your subscription:
-</h2>
-
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['success']}; font-size: 16px;">✓</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        AI-powered coaching sessions with personalized guidance
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['success']}; font-size: 16px;">✓</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        Exclusive lounge resources and learning materials
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['success']}; font-size: 16px;">✓</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        Direct access to mentor's expertise and content
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['success']}; font-size: 16px;">✓</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        Note-taking and progress tracking tools
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- CTA Button -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 35px 0 25px 0;">
-            <a href="{dashboard_url}"
-               style="display: inline-block; background-color: {BRAND_COLORS['primary']}; color: #ffffff;
-                      padding: 16px 40px; font-size: 16px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px; box-shadow: 0 4px 14px 0 rgba(26, 26, 31, 0.3);">
-                Access Your Lounge →
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 20px 0;">
-
-<!-- Help Section -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6; text-align: center;">
-    Questions about your subscription? Contact us at
-    <a href="mailto:support@prompterly.ai" style="color: {BRAND_COLORS['primary']};">support@prompterly.ai</a>
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Welcome to {lounge_name}! Your subscription is now active."
-    )
-
-    return plain_text, html
-
-
-def get_subscription_expiry_warning_email_template(
-    name: str,
-    lounge_name: str,
-    expiry_date: str,
-    days_remaining: int,
-    renewal_url: str
-) -> tuple[str, str]:
-    """
-    Generate subscription expiry warning email
-
-    Args:
-        name: User's name
-        lounge_name: Name of the lounge
-        expiry_date: Subscription expiry date
-        days_remaining: Days until expiry
-        renewal_url: URL to renew subscription
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Your subscription to {lounge_name} is expiring soon!
-
-Your subscription will expire on {expiry_date} ({days_remaining} days remaining).
-
-Don't lose access to:
-- AI-powered coaching sessions
-- Exclusive lounge resources
-- Your saved notes and progress
-
-Renew your subscription now to continue your learning journey without interruption.
-
-Renew here: {renewal_url}
-
-Best regards,
-The Prompterly Team
-"""
-
-    # Determine urgency color based on days remaining
-    urgency_color = BRAND_COLORS['error'] if days_remaining <= 3 else BRAND_COLORS['warning']
-    urgency_bg = "#fef2f2" if days_remaining <= 3 else "#fef3c7"
-    urgency_text = "#991b1b" if days_remaining <= 3 else "#92400e"
-
-    content = f"""
-<!-- Warning Header -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background: {urgency_bg}; border-radius: 12px; margin-bottom: 30px; border: 2px solid {urgency_color};">
-    <tr>
-        <td style="padding: 30px; text-align: center;">
-            <div style="font-size: 48px; margin-bottom: 15px;">⏰</div>
-            <h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 800; color: {urgency_text};">
-                Your Subscription is Expiring Soon
-            </h1>
-            <p style="margin: 0; font-size: 16px; color: {urgency_text};">
-                <strong>{days_remaining} days</strong> remaining
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Personal Greeting -->
-<p style="margin: 0 0 20px 0; font-size: 16px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Hi {name},
-</p>
-<p style="margin: 0 0 25px 0; font-size: 15px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-    Your subscription to <strong>{lounge_name}</strong> is expiring on <strong>{expiry_date}</strong>.
-    Renew now to continue enjoying uninterrupted access to all features.
-</p>
-
-<!-- Expiry Details Card -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 12px; border: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px;">
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Lounge:</span>
-                        <span style="font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">{lounge_name}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Expiry Date:</span>
-                        <span style="font-size: 14px; font-weight: 600; color: {urgency_color};">{expiry_date}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0;">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Days Left:</span>
-                        <span style="font-size: 14px; font-weight: 700; color: {urgency_color};">{days_remaining} days</span>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- What You'll Lose Section -->
-<h2 style="margin: 30px 0 20px 0; font-size: 18px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    Don't lose access to:
-</h2>
-
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['warning']}; font-size: 16px;">⚠️</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        AI-powered coaching sessions
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['warning']}; font-size: 16px;">⚠️</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        Exclusive lounge resources and materials
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['warning']}; font-size: 16px;">⚠️</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        Your saved notes and progress tracking
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- CTA Button -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 35px 0 25px 0;">
-            <a href="{renewal_url}"
-               style="display: inline-block; background-color: {BRAND_COLORS['success']}; color: #ffffff;
-                      padding: 16px 40px; font-size: 16px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px; box-shadow: 0 4px 14px 0 rgba(16, 185, 129, 0.3);">
-                Renew Subscription Now →
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 20px 0;">
-
-<!-- Help Section -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6; text-align: center;">
-    Questions? Contact us at
-    <a href="mailto:support@prompterly.ai" style="color: {BRAND_COLORS['primary']};">support@prompterly.ai</a>
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Your {lounge_name} subscription expires in {days_remaining} days. Renew now to keep access."
-    )
-
-    return plain_text, html
-
-
-def get_subscription_upgrade_email_template(
-    name: str,
-    lounge_name: str,
-    old_plan: str,
-    new_plan: str,
-    new_price: str,
-    savings: str,
-    next_billing_date: str,
-    dashboard_url: str
-) -> tuple[str, str]:
-    """
-    Generate subscription upgrade confirmation email (monthly to yearly)
-
-    Args:
-        name: User's name
-        lounge_name: Name of the lounge
-        old_plan: Previous plan type
-        new_plan: New plan type
-        new_price: New subscription price
-        savings: Amount saved by upgrading
-        next_billing_date: Next billing date
-        dashboard_url: URL to user dashboard
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Great news! Your subscription has been upgraded!
-
-Your {lounge_name} subscription has been successfully upgraded from {old_plan} to {new_plan}.
-
-Subscription Details:
-- Lounge: {lounge_name}
-- New Plan: {new_plan}
-- New Price: {new_price}
-- You're saving: {savings}
-- Next Billing: {next_billing_date}
-
-Thank you for your continued commitment to your growth journey!
-
-Access your lounge: {dashboard_url}
-
-Best regards,
-The Prompterly Team
-"""
-
-    content = f"""
-<!-- Celebration Header -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background: linear-gradient(135deg, {BRAND_COLORS['accent']} 0%, #e8f5c8 100%);
-              border-radius: 12px; margin-bottom: 30px;">
-    <tr>
-        <td style="padding: 30px; text-align: center;">
-            <div style="font-size: 48px; margin-bottom: 15px;">🎉</div>
-            <h1 style="margin: 0 0 10px 0; font-size: 26px; font-weight: 800; color: {BRAND_COLORS['primary']};">
-                Subscription Upgraded!
-            </h1>
-            <p style="margin: 0; font-size: 16px; color: {BRAND_COLORS['text_primary']};">
-                You're now on the {new_plan} plan
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Personal Greeting -->
-<p style="margin: 0 0 20px 0; font-size: 16px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Hi {name},
-</p>
-<p style="margin: 0 0 25px 0; font-size: 15px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-    Your subscription to <strong>{lounge_name}</strong> has been successfully upgraded
-    from <strong>{old_plan}</strong> to <strong>{new_plan}</strong>.
-</p>
-
-<!-- Savings Highlight -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #ecfdf5; border-radius: 12px; border: 2px solid {BRAND_COLORS['success']}; margin: 25px 0;">
-    <tr>
-        <td style="padding: 20px; text-align: center;">
-            <p style="margin: 0 0 5px 0; font-size: 14px; color: #047857;">
-                You're saving
-            </p>
-            <p style="margin: 0; font-size: 28px; font-weight: 800; color: {BRAND_COLORS['success']};">
-                {savings}
-            </p>
-            <p style="margin: 5px 0 0 0; font-size: 14px; color: #047857;">
-                with your new plan!
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Subscription Details Card -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 12px; border: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px;">
-            <h3 style="margin: 0 0 20px 0; font-size: 16px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                Updated Subscription Details
-            </h3>
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Lounge:</span>
-                        <span style="font-size: 14px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">{lounge_name}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Previous Plan:</span>
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_muted']}; text-decoration: line-through;">{old_plan}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">New Plan:</span>
-                        <span style="font-size: 14px; font-weight: 600; color: {BRAND_COLORS['success']};">{new_plan}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0; border-bottom: 1px solid {BRAND_COLORS['border']};">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">New Price:</span>
-                        <span style="font-size: 14px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">{new_price}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px 0;">
-                        <span style="font-size: 14px; color: {BRAND_COLORS['text_secondary']}; display: inline-block; width: 120px;">Next Billing:</span>
-                        <span style="font-size: 14px; font-weight: 500; color: {BRAND_COLORS['text_primary']};">{next_billing_date}</span>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-<!-- CTA Button -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="text-align: center; padding: 25px 0;">
-            <a href="{dashboard_url}"
-               style="display: inline-block; background-color: {BRAND_COLORS['primary']}; color: #ffffff;
-                      padding: 16px 40px; font-size: 16px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px; box-shadow: 0 4px 14px 0 rgba(26, 26, 31, 0.3);">
-                Continue Learning →
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Thank You Note -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #eff6ff; border-radius: 8px; margin-top: 10px;">
-    <tr>
-        <td style="padding: 16px 20px; text-align: center;">
-            <p style="margin: 0; font-size: 14px; color: #1e40af; line-height: 1.6;">
-                Thank you for your continued commitment to your growth journey!
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Help Section -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6; text-align: center;">
-    Questions? Contact us at
-    <a href="mailto:support@prompterly.ai" style="color: {BRAND_COLORS['primary']};">support@prompterly.ai</a>
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Your {lounge_name} subscription has been upgraded to {new_plan}. You're saving {savings}!"
-    )
-
-    return plain_text, html
-
-
-def get_subscription_cancellation_email_template(
-    name: str,
-    lounge_name: str,
-    access_end_date: str,
-    feedback_url: Optional[str] = None
-) -> tuple[str, str]:
-    """
-    Generate subscription cancellation confirmation email
-
-    Args:
-        name: User's name
-        lounge_name: Name of the lounge
-        access_end_date: Date when access ends
-        feedback_url: Optional URL for feedback form
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    feedback_section = ""
-    if feedback_url:
-        feedback_section = f"""
-We'd love to hear from you! If you have a moment, please let us know why you decided to cancel:
-{feedback_url}
-"""
-
-    plain_text = f"""
-Hi {name},
-
-Your subscription to {lounge_name} has been cancelled.
-
-You'll continue to have access until {access_end_date}.
-
-What happens next:
-- You can still access all features until {access_end_date}
-- Your notes and progress will be saved
-- You can resubscribe anytime to regain full access
-{feedback_section}
-We're sorry to see you go. If there's anything we can do to improve, please let us know.
-
-Best regards,
-The Prompterly Team
-"""
-
-    feedback_html = ""
-    if feedback_url:
-        feedback_html = f"""
-<!-- Feedback Section -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #eff6ff; border-radius: 12px; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px; text-align: center;">
-            <p style="margin: 0 0 15px 0; font-size: 15px; color: #1e40af;">
-                We'd love to hear from you
-            </p>
-            <a href="{feedback_url}"
-               style="display: inline-block; background-color: #3b82f6; color: #ffffff;
-                      padding: 12px 30px; font-size: 14px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px;">
-                Share Feedback
-            </a>
-        </td>
-    </tr>
-</table>
-"""
-
-    content = f"""
-<!-- Header -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="margin-bottom: 25px;">
-    <tr>
-        <td style="text-align: center;">
-            <div style="font-size: 48px; margin-bottom: 15px;">👋</div>
-            <h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-                Subscription Cancelled
-            </h1>
-            <p style="margin: 0; font-size: 16px; color: {BRAND_COLORS['text_secondary']};">
-                We're sorry to see you go
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Personal Greeting -->
-<p style="margin: 0 0 20px 0; font-size: 16px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Hi {name},
-</p>
-<p style="margin: 0 0 25px 0; font-size: 15px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-    Your subscription to <strong>{lounge_name}</strong> has been cancelled as requested.
-</p>
-
-<!-- Access End Notice -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #fef3c7; border-radius: 12px; border: 1px solid {BRAND_COLORS['warning']}; margin: 25px 0;">
-    <tr>
-        <td style="padding: 20px; text-align: center;">
-            <p style="margin: 0 0 5px 0; font-size: 14px; color: #92400e;">
-                You'll continue to have access until
-            </p>
-            <p style="margin: 0; font-size: 22px; font-weight: 700; color: #92400e;">
-                {access_end_date}
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- What Happens Next -->
-<h2 style="margin: 30px 0 20px 0; font-size: 18px; font-weight: 700; color: {BRAND_COLORS['text_primary']};">
-    What happens next:
-</h2>
-
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['success']}; font-size: 16px;">✓</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        You can still access all features until {access_end_date}
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['success']}; font-size: 16px;">✓</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        Your notes and progress will be saved
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-    <tr>
-        <td style="padding: 8px 0;">
-            <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="color: {BRAND_COLORS['success']}; font-size: 16px;">✓</span>
-                    </td>
-                    <td style="font-size: 14px; color: {BRAND_COLORS['text_primary']};">
-                        You can resubscribe anytime to regain full access
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>
-</table>
-
-{feedback_html}
-
-<!-- Miss You Section -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 12px; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px; text-align: center;">
-            <p style="margin: 0 0 10px 0; font-size: 15px; color: {BRAND_COLORS['text_primary']};">
-                Changed your mind?
-            </p>
-            <p style="margin: 0 0 20px 0; font-size: 14px; color: {BRAND_COLORS['text_secondary']};">
-                You can resubscribe anytime and pick up where you left off.
-            </p>
-            <a href="https://prompterly.ai/lounges"
-               style="display: inline-block; background-color: {BRAND_COLORS['primary']}; color: #ffffff;
-                      padding: 12px 30px; font-size: 14px; font-weight: 600; text-decoration: none;
-                      border-radius: 50px;">
-                Browse Lounges
-            </a>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Help Section -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6; text-align: center;">
-    If there's anything we can do to improve, please let us know at
-    <a href="mailto:support@prompterly.ai" style="color: {BRAND_COLORS['primary']};">support@prompterly.ai</a>
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Your {lounge_name} subscription has been cancelled. You have access until {access_end_date}."
-    )
-
-    return plain_text, html
-
-
-def get_payment_method_update_email_template(
-    name: str,
-    card_last_four: str,
-    card_brand: str,
-    updated_at: str
-) -> tuple[str, str]:
-    """
-    Generate payment method update confirmation email
-    Note: Does not include full card details for security
-
-    Args:
-        name: User's name
-        card_last_four: Last 4 digits of the card
-        card_brand: Card brand (Visa, Mastercard, etc.)
-        updated_at: Timestamp of the update
-
-    Returns:
-        Tuple of (plain_text, html)
-    """
-    plain_text = f"""
-Hi {name},
-
-Your payment method has been successfully updated!
-
-Payment Method Details:
-- Card: {card_brand} ending in {card_last_four}
-- Updated: {updated_at}
-
-Your future subscription payments will be charged to this card.
-
-If you didn't make this change, please contact our support team immediately.
-
-Best regards,
-The Prompterly Team
-
-Security Notice: If you didn't update your payment method, please contact us at support@prompterly.ai
-"""
-
-    content = f"""
-<!-- Success Header -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
-              border-radius: 12px; margin-bottom: 30px;">
-    <tr>
-        <td style="padding: 30px; text-align: center;">
-            <div style="width: 60px; height: 60px; background-color: {BRAND_COLORS['success']};
-                        border-radius: 50%; margin: 0 auto 15px; text-align: center; line-height: 60px;">
-                <span style="font-size: 28px; color: white;">💳</span>
-            </div>
-            <h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 700; color: #065f46;">
-                Payment Method Updated
-            </h1>
-            <p style="margin: 0; font-size: 16px; color: #047857;">
-                Your card has been successfully updated
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Personal Greeting -->
-<p style="margin: 0 0 20px 0; font-size: 16px; color: {BRAND_COLORS['text_primary']}; line-height: 1.6;">
-    Hi {name},
-</p>
-<p style="margin: 0 0 25px 0; font-size: 15px; color: {BRAND_COLORS['text_secondary']}; line-height: 1.7;">
-    Your payment method has been successfully updated. Your future subscription payments
-    will be charged to this new card.
-</p>
-
-<!-- Payment Details Card -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: {BRAND_COLORS['surface']}; border-radius: 12px; border: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-    <tr>
-        <td style="padding: 25px;">
-            <h3 style="margin: 0 0 20px 0; font-size: 16px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                New Payment Method
-            </h3>
-            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                <tr>
-                    <td style="padding: 15px; background-color: white; border-radius: 8px; border: 1px solid {BRAND_COLORS['border']};">
-                        <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                            <tr>
-                                <td style="vertical-align: middle; padding-right: 15px; width: 50px;">
-                                    <div style="width: 50px; height: 32px; background-color: #1a1a1f;
-                                                border-radius: 4px; text-align: center; line-height: 32px;
-                                                font-size: 12px; color: white; font-weight: 600;">
-                                        {card_brand[:4].upper()}
-                                    </div>
-                                </td>
-                                <td style="vertical-align: middle;">
-                                    <p style="margin: 0; font-size: 16px; font-weight: 600; color: {BRAND_COLORS['text_primary']};">
-                                        {card_brand} •••• {card_last_four}
-                                    </p>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-            <p style="margin: 15px 0 0 0; font-size: 13px; color: {BRAND_COLORS['text_muted']};">
-                Updated on {updated_at}
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Security Notice -->
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-       style="background-color: #fef3c7; border-radius: 8px; margin-top: 20px;">
-    <tr>
-        <td style="padding: 16px 20px;">
-            <p style="margin: 0; font-size: 13px; color: #92400e; line-height: 1.6;">
-                <strong>🔒 Security Notice:</strong> If you didn't make this change or don't recognize this activity,
-                please contact our support team immediately at
-                <a href="mailto:support@prompterly.ai" style="color: #92400e; font-weight: 600;">support@prompterly.ai</a>
-            </p>
-        </td>
-    </tr>
-</table>
-
-<!-- Divider -->
-<hr style="border: none; border-top: 1px solid {BRAND_COLORS['border']}; margin: 25px 0;">
-
-<!-- Help Section -->
-<p style="margin: 0; font-size: 13px; color: {BRAND_COLORS['text_muted']}; line-height: 1.6; text-align: center;">
-    Questions about billing? Contact us at
-    <a href="mailto:support@prompterly.ai" style="color: {BRAND_COLORS['primary']};">support@prompterly.ai</a>
-</p>
-"""
-
-    html = get_base_template(
-        content=content,
-        preview_text=f"Your payment method has been updated to {card_brand} ending in {card_last_four}."
-    )
-
-    return plain_text, html
+    plain_text = f"Hi {name},\n\nWe received a request to reset the password for your Prompterly account.\n\nYour password reset code: {otp}\n\nThis code will expire in 10 minutes for security reasons.\n\nIf you did not request this, you can ignore this email, no changes will be made to your account.\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p("We received a request to reset the password for your Prompterly account.")}
+{_p("Your password reset code:")}
+<p style="margin:0 0 20px 0;font-size:36px;font-weight:800;color:{BRAND_COLORS["text_primary"]};letter-spacing:4px;">{otp}</p>
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">This code will expire in 10 minutes for security reasons.</p>
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If you did not request this, you can ignore this email, no changes will be made to your account.</p>
+{_support("Need additional support? Please view our")}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Reset your Prompterly password")
+
+
+# ── EMAIL #6 — One Time Password (MFA) ───────────────────────────────────────
+# Subject: XXXXXX is your prompterly verification code
+# Trigger: New device login or email change
+
+def get_mfa_otp_email_template(name: str, otp: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nTo continue, please enter the verification code below:\n\n{otp}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this, you can ignore this email. For your security, this code cannot be used without access to your account.\n\nPrompterly Support\nhttps://prompterly.ai/support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">Sign in to prompterly</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p("To continue, please enter the verification code below:")}
+<p style="margin:0 0 20px 0;font-size:36px;font-weight:800;color:{BRAND_COLORS["text_primary"]};letter-spacing:4px;">{otp}</p>
+<p style="margin:0 0 10px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">This code will expire in 10 minutes.</p>
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If you did not request this, you can ignore this email. For your security, this code cannot be used without access to your account.</p>
+{_footer()}
+{_support_link()}'''
+    return plain_text, get_base_template(content, f"{otp} is your prompterly verification code")
+
+
+# ── EMAIL #7 — Suspicious Login / New Device Alert ───────────────────────────
+# Subject: New login detected
+
+def get_suspicious_login_alert_template(name: str, login_time: str, device_info: str, reset_password_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nWe noticed a login to your Prompterly account from a new device or location.\n\nTime: {login_time}\nDevice/Location: {device_info}\n\nIf this was you, no further action is needed.\n\nIf this wasn't you, we recommend resetting your password immediately:\n{reset_password_url}\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p("We noticed a login to your Prompterly account from a new device or location.")}
+<p style="margin:0 0 5px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.6;"><strong>Time:</strong> {login_time}</p>
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.6;"><strong>Device/Location:</strong> {device_info}</p>
+{_p("If this was you, no further action is needed.")}
+{_p("If this wasn't you, we recommend resetting your password immediately.")}
+{_cta("Reset password", reset_password_url)}
+{_support("If you need additional support, please view our")}
+{_footer()}'''
+    return plain_text, get_base_template(content, "New login detected on your Prompterly account")
+
+
+# ── EMAIL #8 — Subscription / Payment Confirmation ───────────────────────────
+# Subject: Subscription confirmed: [Mentor Name]'s Coaching Lounge
+
+def get_subscription_confirmation_email_template(name: str, mentor_name: str, mentor_focus: str, plan_type: str, amount: str, start_date: str, dashboard_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nYou now have full access to {mentor_name}'s Coaching Lounge.\n\nMentor: {mentor_name}\nFocus: {mentor_focus}\nPlan: {plan_type}\nAmount: {amount}\nStart date: {start_date}\n\nYou can access your lounge at any time from your dashboard. Simply click \"Enter Lounge\" to begin.\n\nAll the best,\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p(f"You now have full access to <strong>{mentor_name}'s Coaching Lounge</strong>.")}
+{_p("Here are your subscription details:")}
+{_detail("Mentor", mentor_name)}
+{_detail("Focus", mentor_focus)}
+{_detail("Plan", plan_type)}
+{_detail("Amount", amount)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Start date:</strong> {start_date}</p>
+{_p('You can access your lounge at any time from your dashboard. Simply click <strong>"Enter Lounge"</strong> to begin.')}
+{_cta("Go to dashboard", dashboard_url)}
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">This space is shaped by {mentor_name}'s perspective, designed to give you direct access to their thinking and guidance whenever you need it. Other key things to note:</p>
+<ul style="margin:0 0 25px 0;padding-left:20px;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.8;"><li>You can manage or cancel your subscription at any time from your account settings.</li><li>You can also explore other Coaching Lounges available to you from your dashboard.</li></ul>
+<p style="margin:0 0 5px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};">All the best,</p>
+{_footer()}'''
+    return plain_text, get_base_template(content, f"Subscription confirmed: {mentor_name}'s Coaching Lounge")
+
+
+# ── EMAIL #9 — Annual Auto-Renew (30 Days Before) ────────────────────────────
+# Subject: Upcoming renewal for your Coaching Lounge
+
+def get_annual_renewal_30day_template(name: str, mentor_name: str, renewal_date: str, amount: str, manage_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nYou've spent time inside {mentor_name}'s Coaching Lounge and your access is set to continue.\n\nRenewal date: {renewal_date}\nPlan: Annual\nAmount: {amount}\n\nYour subscription will automatically renew on this date, with uninterrupted access to the lounge.\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p(f"You've spent time inside <strong>{mentor_name}'s Coaching Lounge</strong> and your access is set to continue.")}
+{_p("Here are your upcoming renewal details:")}
+{_detail("Renewal date", renewal_date)}
+{_detail("Plan", "Annual")}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Amount:</strong> {amount}</p>
+{_p("Your subscription will automatically renew on this date, with uninterrupted access to the lounge.")}
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">This space is shaped by {mentor_name}'s frameworks and perspective and is designed to give you direct access to their thinking and guidance whenever you need it.</p>
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If you'd like to make any changes, you can manage your subscription at any time from your account settings.</p>
+{_cta("Manage my subscription", manage_url)}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Upcoming renewal for your Coaching Lounge")
+
+
+# ── EMAIL #10 — Annual Auto-Renew (7 Days Before) ────────────────────────────
+# Subject: Reminder: your subscription renews soon
+
+def get_annual_renewal_7day_template(name: str, mentor_name: str, renewal_date: str, amount: str, manage_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nJust a quick reminder that your subscription to {mentor_name}'s Coaching Lounge will renew soon.\n\nRenewal date: {renewal_date}\nAmount: {amount}\n\nYour access will continue automatically unless you make any changes.\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p(f"Just a quick reminder that your subscription to <strong>{mentor_name}'s Coaching Lounge</strong> will renew soon.")}
+{_detail("Renewal date", renewal_date)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Amount:</strong> {amount}</p>
+{_p("Your access will continue automatically unless you make any changes.")}
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">You can manage your subscription at any time from your account settings.</p>
+{_cta("Manage my subscription", manage_url)}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Reminder: your subscription renews soon")
+
+
+# ── EMAIL #11 — Annual Subscription Renewed ──────────────────────────────────
+# Subject: Renewal confirmed: [Mentor Name]'s Coaching Lounge
+
+def get_annual_renewal_confirmed_template(name: str, mentor_name: str, amount: str, renewal_date: str, next_renewal_date: str, dashboard_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nYour subscription to {mentor_name}'s Coaching Lounge has been successfully renewed.\n\nPlan: Annual\nAmount: {amount}\nRenewal date: {renewal_date}\nNext renewal: {next_renewal_date}\n\nAll the best,\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p(f"Your subscription to <strong>{mentor_name}'s Coaching Lounge</strong> has been successfully renewed.")}
+{_detail("Plan", "Annual")}
+{_detail("Amount", amount)}
+{_detail("Renewal date", renewal_date)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Next renewal:</strong> {next_renewal_date}</p>
+{_p("Your access continues uninterrupted, so you can keep returning to this space whenever you need it.")}
+{_cta("Go to dashboard", dashboard_url)}
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">This space is shaped by {mentor_name}'s perspective, designed to give you direct access to their thinking and guidance whenever you need it. Other key things to note:</p>
+<ul style="margin:0 0 25px 0;padding-left:20px;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.8;"><li>You can manage or cancel your subscription at any time from your account settings.</li><li>You can also explore other Coaching Lounges available to you from your dashboard.</li></ul>
+<p style="margin:0 0 5px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};">All the best,</p>
+{_footer()}'''
+    return plain_text, get_base_template(content, f"Renewal confirmed: {mentor_name}'s Coaching Lounge")
+
+
+# ── EMAIL #12 — Payment Failed Day 0 ─────────────────────────────────────────
+# Subject: We couldn't process your payment
+
+def get_payment_failed_day0_template(name: str, mentor_name: str, plan_type: str, amount: str, update_payment_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nWe weren't able to process your recent payment for {mentor_name}'s Coaching Lounge.\n\nThis is usually due to something simple like an expired card or a temporary issue with your payment method.\n\nTo continue your access without interruption, please update your payment details.\n\nPlan: {plan_type}\nAmount: {amount}\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">Update payment details</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p(f"We weren't able to process your recent payment for <strong>{mentor_name}'s Coaching Lounge</strong>.")}
+{_p("This is usually due to something simple like an expired card or a temporary issue with your payment method.")}
+{_p("To continue your access without interruption, please update your payment details below:")}
+{_cta("Update payment details", update_payment_url)}
+{_detail("Plan", plan_type)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Amount:</strong> {amount}</p>
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">We'll retry the payment shortly, and your access will remain active in the meantime.</p>
+{_contact()}
+{_footer()}'''
+    return plain_text, get_base_template(content, "We couldn't process your payment")
+
+
+# ── EMAIL #13 — Payment Failed Day 3 ─────────────────────────────────────────
+# Subject: Your payment still needs attention
+
+def get_payment_failed_day3_template(name: str, mentor_name: str, plan_type: str, amount: str, update_payment_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nWe've been unable to process your payment for {mentor_name}'s Coaching Lounge, and your subscription still needs attention.\n\nPlan: {plan_type}\nAmount: {amount}\n\nWe'll make one final attempt to process the payment. If it's still unsuccessful, your access will be paused.\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">Update payment details</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p(f"We've been unable to process your payment for <strong>{mentor_name}'s Coaching Lounge</strong>, and your subscription still needs attention.")}
+{_p("To avoid any interruption to your access, please update your payment details below:")}
+{_cta("Update payment details", update_payment_url)}
+{_detail("Plan", plan_type)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Amount:</strong> {amount}</p>
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">We'll make one final attempt to process the payment. If it's still unsuccessful, your access will be paused.</p>
+{_contact()}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Your payment still needs attention")
+
+
+# ── EMAIL #14 — Access Paused (Day 7) ────────────────────────────────────────
+# Subject: Access paused - update your payment to continue
+
+def get_access_paused_template(name: str, data_deletion_date: str, update_payment_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nWe weren't able to process your most recent payment for your Prompterly subscription, and after a couple of attempts, we've temporarily paused your account.\n\nWe'd love to have you back.\n\nTo reactivate your account, update your payment details.\n\nYour data deletion date is: {data_deletion_date}\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">Access paused</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p("We weren't able to process your most recent payment for your Prompterly subscription, and after a couple of attempts, we've temporarily paused your account.")}
+{_p("We'd love to have you back.")}
+{_p("To reactivate your account and pick up right where you left off, simply log in and update your payment details:")}
+{_cta("Update payment details", update_payment_url)}
+<p style="margin:0 0 10px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.6;"><strong><u>Please note:</u></strong></p>
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">Your data, including your chat history, notebook entries, and any time capsules, will be securely held for 90 days from today. If your account isn't reactivated within that window, your data will be permanently and irreversibly deleted from our system. If it is reactivated within this timeframe, you'll be able to pick up exactly where you left off, and everything in your account will still be there.</p>
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.6;"><strong>Your data deletion date is:</strong> {data_deletion_date}</p>
+{_contact()}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Access paused - update your payment to continue")
+
+
+# ── EMAIL #15 — Data Deletion Reminder (60 days after pause) ─────────────────
+# Subject: Your Prompterly data will be deleted in 30 days
+
+def get_data_deletion_reminder_template(name: str, deletion_date: str, reactivate_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nThis is a quick but important note.\n\nYour Prompterly account was paused 60 days ago, and your data is scheduled for permanent deletion in 30 days on {deletion_date}.\n\nOnce deleted, this cannot be undone or recovered.\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">Your data will soon be deleted</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p("This is a quick but important note.")}
+{_p(f"Your Prompterly account was paused 60 days ago, and your data, including your chat history, notebook entries, and time capsules, is scheduled for permanent deletion in 30 days on <strong>{deletion_date}</strong>.")}
+{_p("Once deleted, this cannot be undone or recovered.")}
+{_p("To reactivate your account, update your payment details below and pick up right where you left off.")}
+{_cta("Reactivate account", reactivate_url)}
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If you've decided Prompterly isn't for you right now, we completely understand. We just want to make sure you have the chance to keep anything that matters to you before it's gone.</p>
+{_footer()}'''
+    return plain_text, get_base_template(content, f"Your Prompterly data will be deleted in 30 days")
+
+
+# ── EMAIL #16 — Data Deleted ─────────────────────────────────────────────────
+# Subject: Your Prompterly data has been permanently deleted
+
+def get_data_deleted_template(name: str, signup_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nAs previously notified, your Prompterly account data has now been permanently deleted from our system.\n\nThis includes your chat history, notebook entries, and time capsules. This cannot be undone or recovered.\n\nIf you'd like to start fresh, you can create a new account at {signup_url}\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">Your data has been deleted</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p("As previously notified, your Prompterly account data has now been permanently deleted from our system.")}
+{_p("This includes your chat history, notebook entries, and time capsules. This cannot be undone or recovered.")}
+<p style="margin:0 0 15px 0;font-size:15px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If you'd like to start fresh with Prompterly in the future, you're always welcome back. You can create a new account and subscribe to any Coaching Lounge at <a href="{signup_url}" style="color:{BRAND_COLORS["primary"]};">{signup_url}</a>.</p>
+{_p("We hope Prompterly was valuable to you during your time with us, and we wish you well.")}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Your Prompterly data has been permanently deleted")
+
+
+# ── EMAIL #17 — Subscription Cancelled ───────────────────────────────────────
+# Subject: You've unsubscribed from [Mentor Name]'s Coaching Lounge
+
+def get_subscription_cancellation_email_template(name: str, mentor_name: str, plan_type: str, access_end_date: str, deletion_date: str, dashboard_url: str) -> tuple[str, str]:
+    if plan_type.lower() == "monthly":
+        access_msg = f"Your access will remain active until {access_end_date}, after which your subscription will not renew."
+    else:
+        access_msg = f"You still have time left on your billing cycle, so your access to {mentor_name}'s Coaching Lounge will remain active until {access_end_date}. After that date, your subscription will not renew."
+    plain_text = f"Hi {name},\n\nYou've successfully unsubscribed from {mentor_name}'s Coaching Lounge.\n\n{access_msg}\n\nYour data will be permanently deleted 30 days after your access ends, on {deletion_date}.\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">You have unsubscribed</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p(f"You've successfully unsubscribed from <strong>{mentor_name}'s Coaching Lounge</strong>.")}
+{_p(access_msg)}
+<p style="margin:0 0 10px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.6;"><strong><u>A note on your data:</u></strong></p>
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">Your chat history, notebook entries, and time capsules associated with {mentor_name}'s Coaching Lounge will be permanently deleted 30 days after your access ends, on <strong>{deletion_date}</strong>. This cannot be undone or recovered.</p>
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If you'd like to save anything before then, you can export your data in your user settings.</p>
+<p style="margin:0 0 15px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">Where applicable, your other Coaching Lounges are unaffected and remain active as usual.</p>
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">If you unsubscribed by mistake or change your mind, you can resubscribe to {mentor_name}'s Coaching Lounge at any time here: <a href="{dashboard_url}" style="color:{BRAND_COLORS["primary"]};">dashboard</a>.</p>
+{_footer()}'''
+    return plain_text, get_base_template(content, f"You've unsubscribed from {mentor_name}'s Coaching Lounge")
+
+
+# ── EMAIL #18 — Time Capsule Delivery ────────────────────────────────────────
+# Subject: A new message is ready
+
+def get_time_capsule_delivery_template(name: str, login_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nA new time capsule message has been unlocked and ready for viewing.\n\nYou left something here for yourself, and now it's time to take a look.\n\nSign in: {login_url}\n\nPrompterly Support"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">New time capsule message unlocked</h1>
+{_p(f"Hi {name},", bold=True)}
+{_p("A new time capsule message has been unlocked and ready for viewing.")}
+{_p("You left something here for yourself, and now it's time to take a look.")}
+{_cta("Sign in to Prompterly", login_url)}
+{_footer()}'''
+    return plain_text, get_base_template(content, "A new message is ready")
+
+
+# ── NON-PDF TEMPLATES — Admin/Internal ───────────────────────────────────────
+
+def get_user_credentials_email_template(name: str, email: str, password: str, login_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nAn account has been created for you on Prompterly.\n\nEmail: {email}\nTemporary Password: {password}\n\nPlease login at: {login_url}\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p("An account has been created for you on Prompterly.")}
+{_detail("Email", email)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Temporary Password:</strong> {password}</p>
+<p style="margin:0 0 25px 0;font-size:14px;color:{BRAND_COLORS["text_secondary"]};line-height:1.6;">For security, we recommend changing your password after your first login.</p>
+{_cta("Log in to Prompterly", login_url)}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Welcome to Prompterly - Your Account Credentials")
+
+
+def get_mentor_welcome_email_template(name: str, prompterly_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nWelcome to Prompterly! You've been added as a mentor on our platform.\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p("Welcome to Prompterly! You've been added as a mentor on our platform.")}
+{_p("Your expertise will be used to power a Coaching Lounge, giving users direct access to your thinking, frameworks, and guidance through AI.")}
+{_cta("Visit Prompterly", prompterly_url)}
+{_footer()}'''
+    return plain_text, get_base_template(content, "Welcome to Prompterly - You're Now a Mentor!")
+
+
+def get_contact_confirmation_email_template(name: str, subject: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nThank you for reaching out. We've received your message regarding \"{subject}\" and will get back to you shortly.\n\nPrompterly Support"
+    msg = f"Thank you for reaching out. We've received your message regarding <strong>\"{subject}\"</strong> and will get back to you shortly."
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p(msg)}
+{_footer()}'''
+    return plain_text, get_base_template(content, "We've received your message")
+
+
+def get_contact_admin_notification_template(name: str, email: str, subject: str, message: str, ip_address: str, submitted_at: str, message_id: str) -> tuple[str, str]:
+    plain_text = f"New contact form submission:\n\nFrom: {name} ({email})\nSubject: {subject}\nMessage: {message}\n\nIP: {ip_address}\nTime: {submitted_at}\nID: {message_id}"
+    content = f'''<h1 style="margin:0 0 20px 0;font-size:22px;font-weight:700;color:{BRAND_COLORS["text_primary"]};">New Contact Form Submission</h1>
+{_detail("From", f"{name} ({email})")}
+{_detail("Subject", subject)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Message:</strong> {message}</p>
+<hr style="border:none;border-top:1px solid {BRAND_COLORS["border"]};margin:15px 0;">
+<p style="margin:0;font-size:12px;color:{BRAND_COLORS["text_muted"]};line-height:1.8;">IP: {ip_address} | Time: {submitted_at} | ID: {message_id}</p>'''
+    return plain_text, get_base_template(content, f"New contact: {subject} from {name}")
+
+
+# ── Legacy compatibility aliases ─────────────────────────────────────────────
+
+def get_subscription_expiry_warning_email_template(name: str, plan_name: str, expiry_date: str, days_remaining: int, renewal_url: str, amount: Optional[str] = None) -> tuple[str, str]:
+    return get_annual_renewal_7day_template(name=name, mentor_name=plan_name, renewal_date=expiry_date, amount=amount or "", manage_url=renewal_url)
+
+
+def get_subscription_upgrade_email_template(name: str, old_plan: str, new_plan: str, amount: str, savings: str, next_billing_date: str, dashboard_url: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nYour plan has been upgraded from {old_plan} to {new_plan}.\n\nNew amount: {amount}\nSavings: {savings}\nNext billing: {next_billing_date}\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p(f"Your plan has been upgraded from <strong>{old_plan}</strong> to <strong>{new_plan}</strong>.")}
+{_detail("New amount", amount)}
+{_detail("Savings", savings)}
+<p style="margin:0 0 20px 0;font-size:14px;color:{BRAND_COLORS["text_primary"]};line-height:1.8;"><strong>Next billing:</strong> {next_billing_date}</p>
+{_cta("Go to dashboard", dashboard_url)}
+{_footer()}'''
+    return plain_text, get_base_template(content, f"Plan upgraded to {new_plan}")
+
+
+def get_payment_method_update_email_template(name: str, card_last_four: str, card_brand: str, updated_at: str) -> tuple[str, str]:
+    plain_text = f"Hi {name},\n\nYour payment method has been updated to {card_brand} ending in {card_last_four}.\n\nUpdated on {updated_at}.\n\nPrompterly Support"
+    content = f'''{_p(f"Hi {name},", bold=True)}
+{_p(f"Your payment method has been updated to <strong>{card_brand} ending in {card_last_four}</strong>.")}
+<p style="margin:0 0 25px 0;font-size:13px;color:{BRAND_COLORS["text_muted"]};">Updated on {updated_at}</p>
+<p style="margin:0;font-size:13px;color:{BRAND_COLORS["text_muted"]};line-height:1.6;">If you didn't make this change, please contact <a href="mailto:support@prompterly.ai" style="color:{BRAND_COLORS["primary"]};">support@prompterly.ai</a> immediately.</p>
+{_footer()}'''
+    return plain_text, get_base_template(content, f"Payment method updated to {card_brand} ending in {card_last_four}")

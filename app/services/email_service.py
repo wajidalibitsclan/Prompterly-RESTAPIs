@@ -18,6 +18,7 @@ from datetime import datetime
 from app.core.config import settings
 from app.services.email_templates import (
     get_otp_email_template,
+    get_mfa_otp_email_template,
     get_welcome_email_template,
     get_password_reset_otp_template,
     get_user_credentials_email_template,
@@ -29,6 +30,18 @@ from app.services.email_templates import (
     get_subscription_upgrade_email_template,
     get_subscription_cancellation_email_template,
     get_payment_method_update_email_template,
+    get_email_change_confirmation_template,
+    get_email_change_alert_template,
+    get_suspicious_login_alert_template,
+    get_annual_renewal_30day_template,
+    get_annual_renewal_7day_template,
+    get_annual_renewal_confirmed_template,
+    get_payment_failed_day0_template,
+    get_payment_failed_day3_template,
+    get_access_paused_template,
+    get_data_deletion_reminder_template,
+    get_data_deleted_template,
+    get_time_capsule_delivery_template,
 )
 
 
@@ -73,6 +86,84 @@ def setup_email_logger() -> logging.Logger:
 logger = setup_email_logger()
 
 
+def _send_via_postmark(
+    to: List[str],
+    subject: str,
+    body: str,
+    html: Optional[str] = None,
+    cc: Optional[List[str]] = None,
+    bcc: Optional[List[str]] = None
+) -> bool:
+    """Send email via Postmark API."""
+    from postmarker.core import PostmarkClient
+
+    client = PostmarkClient(server_token=settings.POSTMARK_SERVER_TOKEN)
+
+    kwargs = {
+        "From": f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>",
+        "To": ", ".join(to),
+        "Subject": subject,
+        "TextBody": body,
+    }
+    if html:
+        kwargs["HtmlBody"] = html
+    if cc:
+        kwargs["Cc"] = ", ".join(cc)
+    if bcc:
+        kwargs["Bcc"] = ", ".join(bcc)
+
+    response = client.emails.send(**kwargs)
+    logger.info(f"Postmark response: MessageID={response.get('MessageID', 'N/A')}, ErrorCode={response.get('ErrorCode', 'N/A')}")
+
+    return response.get("ErrorCode", -1) == 0
+
+
+def _send_via_smtp(
+    to: List[str],
+    subject: str,
+    body: str,
+    html: Optional[str] = None,
+    cc: Optional[List[str]] = None,
+    bcc: Optional[List[str]] = None
+) -> bool:
+    """Send email via legacy SMTP (Mailtrap fallback)."""
+    server = None
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
+        msg["To"] = ", ".join(to)
+        if cc:
+            msg["Cc"] = ", ".join(cc)
+        msg["Subject"] = subject
+
+        text_part = MIMEText(body, "plain")
+        msg.attach(text_part)
+        if html:
+            html_part = MIMEText(html, "html")
+            msg.attach(html_part)
+
+        server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=60)
+        if settings.MAIL_TLS:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        if settings.MAIL_USERNAME and settings.MAIL_PASSWORD:
+            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+
+        recipients = to + (cc or []) + (bcc or [])
+        server.sendmail(settings.MAIL_FROM, recipients, msg.as_string())
+        return True
+    except Exception as e:
+        logger.error(f"SMTP Error: {type(e).__name__}: {e}")
+        return False
+    finally:
+        if server:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+
 def send_email_sync(
     to: str | List[str],
     subject: str,
@@ -82,110 +173,44 @@ def send_email_sync(
     bcc: Optional[List[str]] = None
 ) -> bool:
     """
-    Send email via SMTP (synchronous version for background tasks)
+    Send email (synchronous version for background tasks).
 
-    Args:
-        to: Recipient email address(es)
-        subject: Email subject
-        body: Plain text email body
-        html: Optional HTML email body
-        cc: Optional CC recipients
-        bcc: Optional BCC recipients
-
-    Returns:
-        True if email sent successfully, False otherwise
+    Uses Postmark API if POSTMARK_SERVER_TOKEN is configured,
+    otherwise falls back to legacy SMTP.
     """
-    server = None
-    # Handle single or multiple recipients
     if isinstance(to, str):
         to = [to]
     recipients_str = ", ".join(to)
 
+    provider = "Postmark" if settings.POSTMARK_SERVER_TOKEN else "SMTP"
     logger.info("=" * 60)
-    logger.info(f"EMAIL SEND ATTEMPT")
+    logger.info(f"EMAIL SEND ATTEMPT via {provider}")
     logger.info(f"To: {recipients_str}")
     logger.info(f"Subject: {subject}")
     logger.info(f"Timestamp: {datetime.now().isoformat()}")
     logger.info("-" * 60)
 
     try:
-        # Create message
-        msg = MIMEMultipart("alternative")
-        msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
-        msg["To"] = ", ".join(to)
+        if settings.POSTMARK_SERVER_TOKEN:
+            success = _send_via_postmark(to, subject, body, html, cc, bcc)
+        else:
+            success = _send_via_smtp(to, subject, body, html, cc, bcc)
 
-        if cc:
-            msg["Cc"] = ", ".join(cc)
-
-        msg["Subject"] = subject
-
-        # Add plain text part
-        text_part = MIMEText(body, "plain")
-        msg.attach(text_part)
-
-        # Add HTML part if provided
-        if html:
-            html_part = MIMEText(html, "html")
-            msg.attach(html_part)
-
-        # Log SMTP settings for debugging
-        logger.debug(f"SMTP Server: {settings.MAIL_SERVER}:{settings.MAIL_PORT}")
-        logger.debug(f"TLS: {settings.MAIL_TLS}, SSL: {settings.MAIL_SSL}")
-        logger.debug(f"Username: {settings.MAIL_USERNAME[:4]}***")
-
-        # Connect to SMTP server with longer timeout
-        server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=60)
-        server.set_debuglevel(1)  # Enable debug output to see what's happening
-
-        # For Mailtrap on port 2525, use STARTTLS
-        if settings.MAIL_TLS and settings.MAIL_PORT == 2525:
-            # Mailtrap specific handling
-            server.ehlo()
-            context = None  # Use default SSL context
-            server.starttls(context=context)
-            server.ehlo()
-
-        # Login with credentials
-        if settings.MAIL_USERNAME and settings.MAIL_PASSWORD:
-            logger.debug("Attempting SMTP login...")
-            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-            logger.debug("SMTP login successful")
-
-        # Send email
-        recipients = to + (cc or []) + (bcc or [])
-        server.sendmail(settings.MAIL_FROM, recipients, msg.as_string())
-        logger.info(f"SUCCESS - Email sent to: {recipients_str}")
+        if success:
+            logger.info(f"SUCCESS - Email sent to: {recipients_str}")
+        else:
+            logger.error(f"FAILED - Email to: {recipients_str}")
         logger.info("=" * 60)
-        return True
+        return success
 
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"FAILED - SMTP Authentication Error")
-        logger.error(f"To: {recipients_str}")
-        logger.error(f"Subject: {subject}")
-        logger.error(f"Error: {str(e)}")
-        logger.error("=" * 60)
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"FAILED - SMTP Error")
-        logger.error(f"To: {recipients_str}")
-        logger.error(f"Subject: {subject}")
-        logger.error(f"Error: {str(e)}")
-        logger.error("=" * 60)
-        return False
     except Exception as e:
-        logger.error(f"FAILED - Unexpected Error")
+        logger.error(f"FAILED - {provider} Error")
         logger.error(f"To: {recipients_str}")
         logger.error(f"Subject: {subject}")
         logger.error(f"Error Type: {type(e).__name__}")
         logger.error(f"Error: {str(e)}", exc_info=True)
-        logger.error("=" * 60)
+        logger.info("=" * 60)
         return False
-    finally:
-        if server:
-            try:
-                server.quit()
-            except Exception:
-                pass
 
 
 async def send_email(
@@ -196,9 +221,7 @@ async def send_email(
     cc: Optional[List[str]] = None,
     bcc: Optional[List[str]] = None
 ) -> bool:
-    """
-    Send email via SMTP (async wrapper)
-    """
+    """Send email (async wrapper)."""
     return send_email_sync(to, subject, body, html, cc, bcc)
 
 
@@ -352,7 +375,7 @@ def send_welcome_email_sync(email: str, name: str) -> bool:
 
     return send_email_sync(
         to=email,
-        subject="Welcome to Prompterly! Your account is ready",
+        subject="Welcome to prompterly",
         body=body,
         html=html
     )
@@ -388,7 +411,7 @@ def send_otp_email_sync(email: str, name: str, otp: str) -> bool:
 
     return send_email_sync(
         to=email,
-        subject=f"Your Prompterly Verification Code: {otp}",
+        subject=f"{otp} is your prompterly verification code",
         body=body,
         html=html
     )
@@ -417,7 +440,7 @@ def send_password_reset_otp_sync(email: str, name: str, otp: str) -> bool:
 
     return send_email_sync(
         to=email,
-        subject=f"Prompterly Password Reset Code: {otp}",
+        subject="Reset your password",
         body=body,
         html=html
     )
@@ -750,6 +773,208 @@ def send_payment_method_update_email_sync(
     return send_email_sync(
         to=email,
         subject="Payment Method Updated - Prompterly",
+        body=body,
+        html=html
+    )
+
+
+def send_email_change_confirmation_sync(email: str, name: str) -> bool:
+    """
+    Send email change confirmation to the NEW email address.
+    PDF Email #3: 'Your account details have been updated'
+    """
+    body, html = get_email_change_confirmation_template(name)
+    return send_email_sync(
+        to=email,
+        subject="Your account details have been updated",
+        body=body,
+        html=html
+    )
+
+
+def send_email_change_alert_sync(
+    email: str, name: str, secure_account_url: str
+) -> bool:
+    """
+    Send security alert to the OLD email address when email is changed.
+    PDF Email #4: 'Important: Your account details were updated'
+    Includes tokenised 'Secure my account' recovery link.
+    """
+    body, html = get_email_change_alert_template(name, secure_account_url)
+    return send_email_sync(
+        to=email,
+        subject="Important: Your account details were updated",
+        body=body,
+        html=html
+    )
+
+
+def send_suspicious_login_alert_sync(
+    email: str,
+    name: str,
+    login_time: str,
+    device_info: str,
+    reset_password_url: str,
+) -> bool:
+    """
+    Send suspicious login / new device alert email.
+    PDF Email #7: 'New login detected'
+    """
+    body, html = get_suspicious_login_alert_template(
+        name, login_time, device_info, reset_password_url
+    )
+    return send_email_sync(
+        to=email,
+        subject="New login detected",
+        body=body,
+        html=html
+    )
+
+
+# ── New Email Sending Functions (PDF Emails #6, #9-16, #18) ──────────────────
+
+def send_mfa_otp_email_sync(email: str, name: str, otp: str) -> bool:
+    """PDF Email #6: One Time Password (MFA) for new device/email change."""
+    body, html = get_mfa_otp_email_template(name, otp)
+    return send_email_sync(
+        to=email,
+        subject=f"{otp} is your prompterly verification code",
+        body=body,
+        html=html
+    )
+
+
+def send_annual_renewal_30day_sync(
+    email: str, name: str, mentor_name: str,
+    renewal_date: str, amount: str, manage_url: str
+) -> bool:
+    """PDF Email #9: Annual Auto-Renew (30 days before)."""
+    body, html = get_annual_renewal_30day_template(name, mentor_name, renewal_date, amount, manage_url)
+    return send_email_sync(
+        to=email,
+        subject="Upcoming renewal for your Coaching Lounge",
+        body=body,
+        html=html
+    )
+
+
+def send_annual_renewal_7day_sync(
+    email: str, name: str, mentor_name: str,
+    renewal_date: str, amount: str, manage_url: str
+) -> bool:
+    """PDF Email #10: Annual Auto-Renew (7 days before)."""
+    body, html = get_annual_renewal_7day_template(name, mentor_name, renewal_date, amount, manage_url)
+    return send_email_sync(
+        to=email,
+        subject="Reminder: your subscription renews soon",
+        body=body,
+        html=html
+    )
+
+
+def send_annual_renewal_confirmed_sync(
+    email: str, name: str, mentor_name: str,
+    amount: str, renewal_date: str, next_renewal_date: str, dashboard_url: str
+) -> bool:
+    """PDF Email #11: Annual Subscription Renewed."""
+    body, html = get_annual_renewal_confirmed_template(
+        name, mentor_name, amount, renewal_date, next_renewal_date, dashboard_url
+    )
+    return send_email_sync(
+        to=email,
+        subject=f"Renewal confirmed: {mentor_name}'s Coaching Lounge",
+        body=body,
+        html=html
+    )
+
+
+def send_payment_failed_day0_sync(
+    email: str, name: str, mentor_name: str,
+    plan_type: str, amount: str, update_payment_url: str
+) -> bool:
+    """PDF Email #12: Payment Failed — Day 0."""
+    body, html = get_payment_failed_day0_template(name, mentor_name, plan_type, amount, update_payment_url)
+    return send_email_sync(
+        to=email,
+        subject="We couldn't process your payment",
+        body=body,
+        html=html
+    )
+
+
+def send_payment_failed_day3_sync(
+    email: str, name: str, mentor_name: str,
+    plan_type: str, amount: str, update_payment_url: str
+) -> bool:
+    """PDF Email #13: Payment Failed — Day 3."""
+    body, html = get_payment_failed_day3_template(name, mentor_name, plan_type, amount, update_payment_url)
+    return send_email_sync(
+        to=email,
+        subject="Your payment still needs attention",
+        body=body,
+        html=html
+    )
+
+
+def send_access_paused_sync(
+    email: str, name: str, data_deletion_date: str, update_payment_url: str
+) -> bool:
+    """PDF Email #14: Access Paused (Day 7)."""
+    body, html = get_access_paused_template(name, data_deletion_date, update_payment_url)
+    return send_email_sync(
+        to=email,
+        subject="Access paused - update your payment to continue",
+        body=body,
+        html=html
+    )
+
+
+def send_data_deletion_reminder_sync(
+    email: str, name: str, deletion_date: str, reactivate_url: str
+) -> bool:
+    """PDF Email #15: Data Deletion Reminder (60 days after pause)."""
+    body, html = get_data_deletion_reminder_template(name, deletion_date, reactivate_url)
+    return send_email_sync(
+        to=email,
+        subject="Your Prompterly data will be deleted in 30 days",
+        body=body,
+        html=html
+    )
+
+
+def send_data_deleted_sync(email: str, name: str, signup_url: str) -> bool:
+    """PDF Email #16: Data Deleted."""
+    body, html = get_data_deleted_template(name, signup_url)
+    return send_email_sync(
+        to=email,
+        subject="Your Prompterly data has been permanently deleted",
+        body=body,
+        html=html
+    )
+
+
+def send_subscription_cancelled_sync(
+    email: str, name: str, mentor_name: str,
+    plan_type: str, access_end_date: str, deletion_date: str, dashboard_url: str
+) -> bool:
+    """PDF Email #17: Subscription Cancelled."""
+    body, html = get_subscription_cancellation_email_template(
+        name, mentor_name, plan_type, access_end_date, deletion_date, dashboard_url
+    )
+    return send_email_sync(
+        to=email,
+        subject=f"You've unsubscribed from {mentor_name}'s Coaching Lounge",
+        body=body,
+        html=html
+    )
+
+
+def send_time_capsule_delivery_sync(email: str, name: str, login_url: str) -> bool:
+    """PDF Email #18: Time Capsule Delivery."""
+    body, html = get_time_capsule_delivery_template(name, login_url)
+    return send_email_sync(
+        to=email,
+        subject="A new message is ready",
         body=body,
         html=html
     )

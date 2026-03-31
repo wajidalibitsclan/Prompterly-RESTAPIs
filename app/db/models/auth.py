@@ -74,7 +74,7 @@ class EmailOTP(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     email = Column(String(255), nullable=False, index=True)
     otp = Column(String(6), nullable=False)
-    purpose = Column(String(50), nullable=False, default="registration")  # registration, password_reset, etc.
+    purpose = Column(String(50), nullable=False, default="registration")  # registration, password_reset, email_change, etc.
     expires_at = Column(DateTime, nullable=False)
     verified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=now_naive, nullable=False)
@@ -88,3 +88,36 @@ class EmailOTP(Base):
 
     def __repr__(self):
         return f"<EmailOTP(id={self.id}, email={self.email}, valid={self.is_valid})>"
+
+
+class EmailChangeRequest(Base):
+    """Tracks pending and completed email change requests"""
+
+    __tablename__ = "email_change_requests"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    old_email = Column(String(255), nullable=False)
+    new_email = Column(String(255), nullable=False)
+    recovery_token = Column(String(500), nullable=True)
+    recovery_expires_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    reverted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+
+    # Relationships
+    user = relationship("User", backref="email_change_requests")
+
+    @property
+    def is_revertable(self) -> bool:
+        """Check if the email change can still be reverted"""
+        if self.reverted_at:
+            return False
+        if not self.completed_at:
+            return False
+        if not self.recovery_expires_at:
+            return False
+        return now_naive() < self.recovery_expires_at
+
+    def __repr__(self):
+        return f"<EmailChangeRequest(id={self.id}, user_id={self.user_id}, old={self.old_email}, new={self.new_email})>"

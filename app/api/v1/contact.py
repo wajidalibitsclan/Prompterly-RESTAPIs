@@ -14,6 +14,7 @@ from app.services.email_service import (
     send_contact_admin_notification_sync
 )
 from app.core.config import settings
+from app.core.rate_limit import limiter, STRICT
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class ContactFormResponse(BaseModel):
 
 
 @router.post("/", response_model=ContactFormResponse)
+@limiter.limit(STRICT)
 async def submit_contact_form(
     form_data: ContactFormRequest,
     request: Request,

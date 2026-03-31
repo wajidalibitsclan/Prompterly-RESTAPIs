@@ -13,6 +13,7 @@ from app.db.models.note import Note
 from app.db.models.lounge import Lounge, LoungeMembership
 from app.db.models.mentor import Mentor
 from app.services.ai_service import ai_service
+from app.core.encryption import encrypt_content, decrypt_content
 from app.services.knowledge_base_service import knowledge_base_service
 
 logger = logging.getLogger(__name__)
@@ -124,12 +125,12 @@ class ChatService:
             if not reply_to_msg:
                 raise ValueError("Reply-to message not found in this thread")
 
-        # Create user message
+        # Create user message (encrypt before storage)
         user_message = ChatMessage(
             thread_id=thread_id,
             sender_type=SenderType.USER,
             user_id=user_id,
-            content=content,
+            content=encrypt_content(content),
             reply_to_id=reply_to_id
         )
 
@@ -141,7 +142,7 @@ class ChatService:
 
         if generate_ai_response:
             try:
-                # Get conversation history
+                # Get conversation history (decrypted for AI context)
                 history = await self._get_conversation_history(thread_id, db)
 
                 # Get lounge context (mentor info, system prompt)
@@ -172,11 +173,11 @@ class ChatService:
                 if rag_sources:
                     metadata["rag_sources"] = rag_sources
 
-                # Create AI message
+                # Create AI message (encrypt before storage)
                 ai_message = ChatMessage(
                     thread_id=thread_id,
                     sender_type=SenderType.AI,
-                    content=ai_response,
+                    content=encrypt_content(ai_response),
                     message_metadata=metadata
                 )
 
@@ -237,12 +238,12 @@ class ChatService:
             if not reply_to_msg:
                 raise ValueError("Reply-to message not found in this thread")
 
-        # Create user message
+        # Create user message (encrypt before storage)
         user_message = ChatMessage(
             thread_id=thread_id,
             sender_type=SenderType.USER,
             user_id=user_id,
-            content=content,
+            content=encrypt_content(content),
             reply_to_id=reply_to_id
         )
 
@@ -250,14 +251,14 @@ class ChatService:
         db.commit()
         db.refresh(user_message)
 
-        # Yield user message event
+        # Yield user message event (return plaintext to client)
         yield {
             "event": "user_message",
             "data": {
                 "id": user_message.id,
                 "thread_id": user_message.thread_id,
                 "sender_type": "user",
-                "content": user_message.content,
+                "content": content,
                 "created_at": user_message.created_at.isoformat()
             }
         }
@@ -303,10 +304,11 @@ class ChatService:
             if rag_sources:
                 metadata["rag_sources"] = rag_sources
 
+            # Encrypt AI response before storage
             ai_message = ChatMessage(
                 thread_id=thread_id,
                 sender_type=SenderType.AI,
-                content=full_response,
+                content=encrypt_content(full_response),
                 message_metadata=metadata
             )
 
@@ -320,14 +322,14 @@ class ChatService:
             # Refresh thread to get updated title
             db.refresh(thread)
 
-            # Yield completion event with full message and updated thread title
+            # Yield completion event (return plaintext to client)
             yield {
                 "event": "ai_complete",
                 "data": {
                     "id": ai_message.id,
                     "thread_id": ai_message.thread_id,
                     "sender_type": "ai",
-                    "content": ai_message.content,
+                    "content": full_response,
                     "created_at": ai_message.created_at.isoformat(),
                     "metadata": metadata,
                     "thread_title": thread.title
@@ -372,12 +374,12 @@ class ChatService:
             if msg.sender_type == SenderType.USER:
                 history.append({
                     "role": "user",
-                    "content": msg.content
+                    "content": decrypt_content(msg.content)
                 })
             elif msg.sender_type == SenderType.AI:
                 history.append({
                     "role": "assistant",
-                    "content": msg.content
+                    "content": decrypt_content(msg.content)
                 })
         
         return history
@@ -845,8 +847,8 @@ Communication Style:
         if not thread:
             raise ValueError("Thread not found or access denied")
 
-        # Update the message
-        message.content = new_content
+        # Update the message (encrypt before storage)
+        message.content = encrypt_content(new_content)
         message.edited_at = now_naive()
         db.commit()
         db.refresh(message)

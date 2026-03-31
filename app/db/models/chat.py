@@ -39,11 +39,13 @@ class ChatThread(Base):
         default=ThreadStatus.OPEN,
         nullable=False
     )
+    config_version_id = Column(Integer, ForeignKey("lounge_config_versions.id"), nullable=True)  # Which config version was used
     created_at = Column(DateTime, default=now_naive, nullable=False)
-    
+
     # Relationships
     user = relationship("User", back_populates="chat_threads")
     lounge = relationship("Lounge", back_populates="chat_threads")
+    config_version = relationship("LoungeConfigVersion")
     messages = relationship(
         "ChatMessage",
         back_populates="thread",

@@ -14,11 +14,15 @@ from app.core.jwt import get_current_active_user
 from app.core.config import settings
 from app.db.models.user import User
 from app.db.models.billing import SubscriptionPlan, Subscription, Payment, LoungeSubscription, SubscriptionStatus
+from datetime import timedelta
 from app.services.email_service import (
     send_subscription_confirmation_email_sync,
-    send_subscription_cancellation_email_sync,
+    send_subscription_cancelled_sync,
     send_subscription_upgrade_email_sync,
     send_payment_method_update_email_sync,
+    send_payment_failed_day0_sync,
+    send_payment_failed_day3_sync,
+    send_access_paused_sync,
 )
 from app.schemas.billing import (
     SubscriptionPlanResponse,
@@ -570,14 +574,37 @@ async def cancel_lounge_subscription(
 
         lounge = subscription.lounge
 
-        # Send cancellation confirmation email
+        # Calculate access end date and 30-day deletion date
         access_end_date = subscription.renews_at.strftime("%B %d, %Y") if subscription.renews_at else "immediately"
+        if subscription.renews_at:
+            deletion_date = (subscription.renews_at + timedelta(days=30)).strftime("%B %d, %Y")
+        else:
+            deletion_date = (now_naive() + timedelta(days=30)).strftime("%B %d, %Y")
+
+        # Schedule data deletion 30 days after access ends
+        if not current_user.data_deletion_scheduled_at:
+            if subscription.renews_at:
+                current_user.data_deletion_scheduled_at = subscription.renews_at + timedelta(days=30)
+            else:
+                current_user.data_deletion_scheduled_at = now_naive() + timedelta(days=30)
+            db.commit()
+
+        # Determine plan type
+        plan_type = subscription.plan_type.value if subscription.plan_type else "monthly"
+
+        # Dashboard URL for resubscribe link
+        dashboard_url = f"{settings.CORS_ORIGINS[0]}/dashboard" if settings.CORS_ORIGINS else "https://prompterly.ai/dashboard"
+
+        # Send cancellation email (PDF #17) with data deletion warning
         background_tasks.add_task(
-            send_subscription_cancellation_email_sync,
+            send_subscription_cancelled_sync,
             current_user.email,
             current_user.name,
             lounge.title,
-            access_end_date
+            plan_type,
+            access_end_date,
+            deletion_date,
+            dashboard_url
         )
 
         return LoungeSubscriptionResponse(
@@ -989,19 +1016,64 @@ async def stripe_webhook(
 
             if subscription_id:
                 logger.warning(f"Invoice payment failed for subscription {subscription_id}")
-                # Fetch the updated subscription from Stripe to get its current status
                 try:
                     stripe_sub = stripe.Subscription.retrieve(subscription_id)
+
                     # Check if it's a lounge subscription
                     lounge_sub = db.query(LoungeSubscription).filter(
                         LoungeSubscription.stripe_subscription_id == subscription_id
                     ).first()
+
                     if lounge_sub:
                         await billing_service.handle_lounge_subscription_updated(stripe_sub, db)
+
+                        # Get user and lounge for dunning emails
+                        user = db.query(User).filter(User.id == lounge_sub.user_id).first()
+                        lounge = lounge_sub.lounge
+
+                        if user and lounge:
+                            user.payment_failure_count = (user.payment_failure_count or 0) + 1
+                            failure_count = user.payment_failure_count
+                            plan_type = lounge_sub.plan_type.value.capitalize() if lounge_sub.plan_type else "Monthly"
+                            amount = "$25/month" if plan_type.lower() == "monthly" else "$240/year"
+                            update_url = f"{settings.CORS_ORIGINS[0]}/settings/payment" if settings.CORS_ORIGINS else "https://prompterly.ai/settings/payment"
+
+                            if failure_count == 1:
+                                # Day 0 — first failure (PDF Email #12)
+                                send_payment_failed_day0_sync(
+                                    user.email, user.name, lounge.title,
+                                    plan_type, amount, update_url
+                                )
+                                logger.info(f"Payment failed Day 0 email sent to {user.email}")
+
+                            elif failure_count == 2:
+                                # Day 3 — second failure (PDF Email #13)
+                                send_payment_failed_day3_sync(
+                                    user.email, user.name, lounge.title,
+                                    plan_type, amount, update_url
+                                )
+                                logger.info(f"Payment failed Day 3 email sent to {user.email}")
+
+                            elif failure_count >= 3:
+                                # Day 7 — final failure, pause account (PDF Email #14)
+                                user.account_paused_at = now_naive()
+                                data_deletion_date = (now_naive() + timedelta(days=90)).strftime("%B %d, %Y")
+                                user.data_deletion_scheduled_at = now_naive() + timedelta(days=90)
+
+                                send_access_paused_sync(
+                                    user.email, user.name,
+                                    data_deletion_date, update_url
+                                )
+                                logger.info(f"Account paused + Day 7 email sent to {user.email}")
+
+                            db.commit()
                     else:
                         await billing_service.handle_subscription_updated(stripe_sub, db)
+
                 except Exception as e:
                     logger.error(f"Error processing invoice.payment_failed: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
             else:
                 logger.warning(f"No subscription_id found in {event_type} event")
 

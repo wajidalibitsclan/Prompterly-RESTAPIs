@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '012'
-down_revision = '011_add_rag_to_public_chatbot'
+down_revision = '011'
 branch_labels = None
 depends_on = None
 

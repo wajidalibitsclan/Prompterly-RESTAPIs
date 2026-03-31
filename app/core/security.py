@@ -223,10 +223,10 @@ def generate_password_reset_token(email: str) -> str:
 def verify_password_reset_token(token: str) -> Optional[str]:
     """
     Verify a password reset token
-    
+
     Args:
         token: Password reset token
-        
+
     Returns:
         Email address if valid, None otherwise
     """
@@ -236,10 +236,53 @@ def verify_password_reset_token(token: str) -> Optional[str]:
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM]
         )
-        
+
         if payload.get("purpose") == "password_reset":
             return payload.get("email")
-        
+
+        return None
+    except JWTError:
+        return None
+
+
+def generate_email_change_recovery_token(
+    user_id: int, old_email: str, new_email: str
+) -> str:
+    """
+    Generate a tokenised recovery link for reverting an email change.
+    Valid for 48 hours.
+    """
+    data = {
+        "user_id": user_id,
+        "old_email": old_email,
+        "new_email": new_email,
+        "purpose": "email_change_revert",
+    }
+    expire = now_naive() + timedelta(hours=48)
+    to_encode = data.copy()
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def verify_email_change_recovery_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Verify an email change recovery token.
+
+    Returns:
+        Dict with user_id, old_email, new_email if valid, None otherwise
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+        if payload.get("purpose") == "email_change_revert":
+            return {
+                "user_id": payload.get("user_id"),
+                "old_email": payload.get("old_email"),
+                "new_email": payload.get("new_email"),
+            }
         return None
     except JWTError:
         return None

@@ -2,6 +2,9 @@
 Core configuration module for AI Coaching Platform
 Handles all environment variables and application settings
 """
+# Load secrets from AWS Secrets Manager before reading env vars
+from app.core.secrets import load_secrets_from_aws  # noqa: F401
+
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
@@ -17,6 +20,9 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     BASE_URL: str = "http://localhost:8000"  # Base URL for generating absolute URLs
     SECRET_KEY: str
+
+    # Encryption (AES-256-GCM for chat, notes, capsules)
+    ENCRYPTION_KEY: str = ""  # Set to enable application-level encryption
 
     # Timezone
     TIMEZONE: str = "Australia/Sydney"  # Australian Eastern Time (AEST/AEDT)
@@ -83,13 +89,16 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_MODEL: str = "claude-3-opus-20240229"
     
-    # Email
-    MAIL_USERNAME: str
-    MAIL_PASSWORD: str
-    MAIL_FROM: str
+    # Email - Postmark
+    POSTMARK_SERVER_TOKEN: str = ""  # Postmark Server API Token (for REST API)
+    MAIL_FROM: str = "support@prompterly.ai"
+    MAIL_FROM_NAME: str = "Prompterly Support"
+
+    # SMTP settings (used when POSTMARK_SERVER_TOKEN is not set, or as Postmark SMTP)
+    MAIL_USERNAME: str = ""
+    MAIL_PASSWORD: str = ""
     MAIL_PORT: int = 587
-    MAIL_SERVER: str
-    MAIL_FROM_NAME: str = "AI Coaching Platform"
+    MAIL_SERVER: str = "smtp.postmarkapp.com"
     MAIL_TLS: bool = True
     MAIL_SSL: bool = False
 

@@ -1,20 +1,27 @@
 """
 User management API endpoints
-Handles user profile, password changes, activity logs
+Handles user profile, password changes, activity logs, GDPR data export/deletion
 """
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List
+import json
 
 from app.db.session import get_db
 from app.core.timezone import now_naive
+from app.core.encryption import decrypt_content
 from app.core.jwt import get_current_user, get_current_active_user
 from app.core.security import verify_password, hash_password
 from app.db.models.user import User
 from app.schemas.auth import (
     UserResponse,
     UserUpdate,
-    PasswordChange
+    PasswordChange,
+    LanguageTimezoneUpdate,
+    NotificationPreferencesUpdate,
+    NotificationPreferencesResponse,
+    PrivacyAcceptance,
 )
 from app.services.file_service import file_service
 
@@ -244,37 +251,323 @@ async def get_user_activity(
     return activity[:limit]
 
 
-@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+# =============================================================================
+# Settings Endpoints
+# =============================================================================
+
+@router.get("/me/settings/language-timezone")
+async def get_language_timezone(
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get current language and timezone preferences."""
+    return {
+        "language": current_user.language,
+        "timezone": current_user.timezone,
+    }
+
+
+@router.put("/me/settings/language-timezone")
+async def update_language_timezone(
+    data: LanguageTimezoneUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update language and/or timezone preferences."""
+    if data.language is not None:
+        current_user.language = data.language
+    if data.timezone is not None:
+        current_user.timezone = data.timezone
+
+    current_user.updated_at = now_naive()
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "language": current_user.language,
+        "timezone": current_user.timezone,
+    }
+
+
+@router.get("/me/settings/notifications", response_model=NotificationPreferencesResponse)
+async def get_notification_preferences(
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get current notification preferences."""
+    return current_user
+
+
+@router.put("/me/settings/notifications", response_model=NotificationPreferencesResponse)
+async def update_notification_preferences(
+    data: NotificationPreferencesUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update notification preferences (toggle email, in-app, per-type)."""
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(current_user, field, value)
+
+    current_user.updated_at = now_naive()
+    db.commit()
+    db.refresh(current_user)
+
+    return current_user
+
+
+@router.get("/me/settings/privacy")
+async def get_privacy_status(
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get current privacy policy, ToS acceptance, and age confirmation status."""
+    return {
+        "privacy_accepted_at": current_user.privacy_accepted_at,
+        "tos_accepted_at": current_user.tos_accepted_at,
+        "age_confirmed": current_user.age_confirmed,
+    }
+
+
+@router.post("/me/settings/privacy", status_code=status.HTTP_200_OK)
+async def accept_privacy(
+    data: PrivacyAcceptance,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Accept privacy policy, terms of service, and/or confirm age (18+).
+    Once accepted, timestamps are recorded and cannot be unset.
+    """
+    if data.accept_privacy_policy and not current_user.privacy_accepted_at:
+        current_user.privacy_accepted_at = now_naive()
+
+    if data.accept_terms_of_service and not current_user.tos_accepted_at:
+        current_user.tos_accepted_at = now_naive()
+
+    if data.confirm_age_18_plus and not current_user.age_confirmed:
+        current_user.age_confirmed = True
+
+    current_user.updated_at = now_naive()
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "privacy_accepted_at": current_user.privacy_accepted_at,
+        "tos_accepted_at": current_user.tos_accepted_at,
+        "age_confirmed": current_user.age_confirmed,
+    }
+
+
+# =============================================================================
+# GDPR — Data Export & Account Deletion
+# =============================================================================
+
+@router.get("/me/export", status_code=status.HTTP_200_OK)
+async def export_user_data(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Export all user data as JSON (GDPR data portability).
+
+    Returns:
+        JSON containing profile, chat history, notes, time capsules,
+        subscriptions, and notification preferences.
+    """
+    from app.db.models.chat import ChatThread, ChatMessage
+    from app.db.models.note import Note, TimeCapsule
+    from app.db.models.billing import LoungeSubscription
+    from app.db.models.misc import ComplianceRequest, RequestType, RequestStatus
+
+    # Record the export request
+    compliance_req = ComplianceRequest(
+        user_id=current_user.id,
+        request_type=RequestType.EXPORT,
+        status=RequestStatus.DONE
+    )
+    db.add(compliance_req)
+    db.commit()
+
+    # 1. Profile data
+    profile = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "role": current_user.role.value if current_user.role else None,
+        "language": current_user.language,
+        "timezone": current_user.timezone,
+        "email_verified_at": current_user.email_verified_at.isoformat() if current_user.email_verified_at else None,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+    }
+
+    # 2. Chat history (decrypted)
+    threads = db.query(ChatThread).filter(ChatThread.user_id == current_user.id).all()
+    chat_data = []
+    for thread in threads:
+        messages = db.query(ChatMessage).filter(
+            ChatMessage.thread_id == thread.id
+        ).order_by(ChatMessage.created_at.asc()).all()
+
+        chat_data.append({
+            "thread_id": thread.id,
+            "title": thread.title,
+            "lounge_id": thread.lounge_id,
+            "created_at": thread.created_at.isoformat() if thread.created_at else None,
+            "messages": [
+                {
+                    "id": msg.id,
+                    "sender_type": msg.sender_type.value if msg.sender_type else None,
+                    "content": decrypt_content(msg.content),
+                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                }
+                for msg in messages
+            ]
+        })
+
+    # 3. Notes (decrypted)
+    notes = db.query(Note).filter(Note.user_id == current_user.id).all()
+    notes_data = [
+        {
+            "id": note.id,
+            "title": note.title,
+            "content": decrypt_content(note.content),
+            "lounge_id": note.lounge_id if hasattr(note, 'lounge_id') else None,
+            "is_pinned": note.is_pinned,
+            "created_at": note.created_at.isoformat() if note.created_at else None,
+        }
+        for note in notes
+    ]
+
+    # 4. Time capsules (decrypted)
+    capsules = db.query(TimeCapsule).filter(TimeCapsule.user_id == current_user.id).all()
+    capsules_data = [
+        {
+            "id": capsule.id,
+            "title": capsule.title,
+            "content": decrypt_content(capsule.content),
+            "unlock_at": capsule.unlock_at.isoformat() if capsule.unlock_at else None,
+            "status": capsule.status.value if capsule.status else None,
+            "created_at": capsule.created_at.isoformat() if capsule.created_at else None,
+        }
+        for capsule in capsules
+    ]
+
+    # 5. Subscriptions
+    subs = db.query(LoungeSubscription).filter(
+        LoungeSubscription.user_id == current_user.id
+    ).all()
+    subs_data = [
+        {
+            "lounge_id": sub.lounge_id,
+            "plan_type": sub.plan_type.value if sub.plan_type else None,
+            "status": sub.status.value if sub.status else None,
+            "started_at": sub.started_at.isoformat() if sub.started_at else None,
+            "renews_at": sub.renews_at.isoformat() if sub.renews_at else None,
+            "canceled_at": sub.canceled_at.isoformat() if sub.canceled_at else None,
+        }
+        for sub in subs
+    ]
+
+    export = {
+        "export_date": now_naive().isoformat(),
+        "profile": profile,
+        "chat_history": chat_data,
+        "notes": notes_data,
+        "time_capsules": capsules_data,
+        "subscriptions": subs_data,
+    }
+
+    return JSONResponse(
+        content=export,
+        headers={
+            "Content-Disposition": f"attachment; filename=prompterly_data_export_{current_user.id}.json"
+        }
+    )
+
+
+@router.delete("/me", status_code=status.HTTP_200_OK)
 async def delete_current_user(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
-    Delete current user account
-    
-    - Soft deletes user data
-    - Anonymizes personal information
-    - Keeps historical records for compliance
+    Delete current user account (GDPR right to erasure).
+
+    - Blocked if user is under legal hold
+    - Anonymises personal identity (name, email, avatar, stripe ID)
+    - Revokes all auth credentials (password hash, TOTP secret, sessions)
+    - Records a compliance delete request
+    - Content records (chat, notes, capsules) remain associated with
+      the anonymised user_id for pseudonymous retention per security doc.
     """
-    # Anonymize user data instead of hard delete
-    current_user.email = f"deleted_{current_user.id}@deleted.com"
-    current_user.name = f"Deleted User {current_user.id}"
-    current_user.avatar_url = None
-    current_user.password_hash = hash_password(f"deleted_{current_user.id}")
-    
-    # Mark all sessions as revoked
+    # Check legal hold
+    if current_user.legal_hold:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account deletion is temporarily disabled due to a legal hold. Please contact support."
+        )
+
     from app.db.models.auth import UserSession
+    from app.db.models.misc import ComplianceRequest, RequestType, RequestStatus
+
+    # 1. Record the deletion request
+    compliance_req = ComplianceRequest(
+        user_id=current_user.id,
+        request_type=RequestType.DELETE,
+        status=RequestStatus.DONE
+    )
+    db.add(compliance_req)
+
+    # 2. Anonymise personal identity fields
+    current_user.email = f"deleted_{current_user.id}@deleted.prompterly.ai"
+    current_user.name = f"Deleted User"
+    current_user.avatar_url = None
+    current_user.stripe_customer_id = None
+
+    # 3. Revoke auth credentials
+    current_user.password_hash = hash_password(f"deleted_{current_user.id}_{now_naive().timestamp()}")
+    current_user.totp_secret = None
+    current_user.is_2fa_enabled = False
+
+    # 4. Clear preferences (not PII but clean up)
+    current_user.privacy_accepted_at = None
+    current_user.tos_accepted_at = None
+
+    # 5. Revoke all active sessions
     sessions = db.query(UserSession).filter(
         UserSession.user_id == current_user.id,
         UserSession.revoked_at.is_(None)
     ).all()
-    
     for session in sessions:
         session.revoked_at = now_naive()
-    
+
     db.commit()
-    
-    return None
+
+    return {
+        "message": "Your account has been anonymised and all credentials revoked. Content records remain pseudonymous."
+    }
+
+
+@router.get("/me/compliance-requests")
+async def get_compliance_requests(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all GDPR compliance requests for the current user (export/delete history).
+    """
+    from app.db.models.misc import ComplianceRequest
+
+    requests = db.query(ComplianceRequest).filter(
+        ComplianceRequest.user_id == current_user.id
+    ).order_by(ComplianceRequest.created_at.desc()).all()
+
+    return [
+        {
+            "id": req.id,
+            "request_type": req.request_type.value if req.request_type else None,
+            "status": req.status.value if req.status else None,
+            "created_at": req.created_at.isoformat() if req.created_at else None,
+        }
+        for req in requests
+    ]
 
 
 @router.get("/{user_id}", response_model=UserResponse)

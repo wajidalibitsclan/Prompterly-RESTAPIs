@@ -11,6 +11,7 @@ import json
 
 from app.db.session import get_db
 from app.core.jwt import get_current_active_user
+from app.core.encryption import decrypt_content
 from app.db.models.user import User
 from app.db.models.chat import ChatThread, ChatMessage
 from app.db.models.file import File as FileModel
@@ -184,7 +185,7 @@ async def get_thread(
 
                 reply_to_info = ReplyToInfo(
                     id=msg.reply_to.id,
-                    content=msg.reply_to.content[:100] + "..." if len(msg.reply_to.content) > 100 else msg.reply_to.content,
+                    content=decrypt_content(msg.reply_to.content)[:100] + "..." if len(decrypt_content(msg.reply_to.content)) > 100 else decrypt_content(msg.reply_to.content),
                     sender_name=reply_sender_name,
                     sender_type=msg.reply_to.sender_type
                 )
@@ -194,7 +195,7 @@ async def get_thread(
                 thread_id=msg.thread_id,
                 sender_type=msg.sender_type,
                 user_id=msg.user_id,
-                content=msg.content,
+                content=decrypt_content(msg.content),
                 metadata=msg.message_metadata,
                 created_at=msg.created_at,
                 sender_name=sender_name,
@@ -356,7 +357,7 @@ async def send_message(
 
             reply_to_info = ReplyToInfo(
                 id=user_message.reply_to.id,
-                content=user_message.reply_to.content[:100] + "..." if len(user_message.reply_to.content) > 100 else user_message.reply_to.content,
+                content=decrypt_content(user_message.reply_to.content)[:100] + "..." if len(decrypt_content(user_message.reply_to.content)) > 100 else decrypt_content(user_message.reply_to.content),
                 sender_name=reply_sender_name,
                 sender_type=user_message.reply_to.sender_type
             )
@@ -367,7 +368,7 @@ async def send_message(
             thread_id=user_message.thread_id,
             sender_type=user_message.sender_type,
             user_id=user_message.user_id,
-            content=user_message.content,
+            content=decrypt_content(user_message.content),
             metadata=user_message.message_metadata,
             created_at=user_message.created_at,
             sender_name=current_user.name,
@@ -385,7 +386,7 @@ async def send_message(
                 thread_id=ai_message.thread_id,
                 sender_type=ai_message.sender_type,
                 user_id=ai_message.user_id,
-                content=ai_message.content,
+                content=decrypt_content(ai_message.content),
                 metadata=ai_message.message_metadata,
                 created_at=ai_message.created_at,
                 sender_name=ai_sender_name,
@@ -572,7 +573,7 @@ async def edit_message(
 
             reply_to_info = ReplyToInfo(
                 id=edited_message.reply_to.id,
-                content=edited_message.reply_to.content[:100] + "..." if len(edited_message.reply_to.content) > 100 else edited_message.reply_to.content,
+                content=decrypt_content(edited_message.reply_to.content)[:100] + "..." if len(decrypt_content(edited_message.reply_to.content)) > 100 else decrypt_content(edited_message.reply_to.content),
                 sender_name=reply_sender_name,
                 sender_type=edited_message.reply_to.sender_type
             )
@@ -583,7 +584,7 @@ async def edit_message(
             thread_id=edited_message.thread_id,
             sender_type=edited_message.sender_type,
             user_id=edited_message.user_id,
-            content=edited_message.content,
+            content=decrypt_content(edited_message.content),
             metadata=edited_message.message_metadata,
             created_at=edited_message.created_at,
             edited_at=edited_message.edited_at,
@@ -612,7 +613,7 @@ async def edit_message(
                 thread_id=ai_message.thread_id,
                 sender_type=ai_message.sender_type,
                 user_id=ai_message.user_id,
-                content=ai_message.content,
+                content=decrypt_content(ai_message.content),
                 metadata=ai_message.message_metadata,
                 created_at=ai_message.created_at,
                 edited_at=None,
@@ -675,7 +676,7 @@ async def regenerate_response(
             thread_id=ai_message.thread_id,
             sender_type=ai_message.sender_type,
             user_id=ai_message.user_id,
-            content=ai_message.content,
+            content=decrypt_content(ai_message.content),
             metadata=ai_message.message_metadata,
             created_at=ai_message.created_at,
             edited_at=None,

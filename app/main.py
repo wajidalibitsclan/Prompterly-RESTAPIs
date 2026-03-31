@@ -13,9 +13,13 @@ from pathlib import Path
 import time
 import uuid
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
 from app.core.config import settings
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging, get_logger, log_api_request, log_error
+from app.core.rate_limit import limiter
 from app.db.session import init_db
 
 # Setup logging
@@ -77,6 +81,11 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan
 )
+
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Add CORS middleware
@@ -314,7 +323,7 @@ async def root():
 # API Routers
 # =============================================================================
 
-from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin, knowledge_base, contact, public_chatbot, newsletter
+from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin, knowledge_base, contact, public_chatbot, newsletter, landing
 
 # Include API v1 routers
 api_v1_prefix = settings.API_V1_PREFIX
@@ -334,6 +343,7 @@ app.include_router(knowledge_base.router, prefix=f"{api_v1_prefix}/knowledge-bas
 app.include_router(contact.router, prefix=f"{api_v1_prefix}/contact", tags=["Contact"])
 app.include_router(public_chatbot.router, prefix=api_v1_prefix, tags=["Public Chatbot"])
 app.include_router(newsletter.router, prefix=api_v1_prefix, tags=["Newsletter"])
+app.include_router(landing.router, prefix=f"{api_v1_prefix}/landing", tags=["Landing Page & Dashboard"])
 
 logger.info(f"Registered {len(app.routes)} routes")
 

@@ -2548,3 +2548,74 @@ async def delete_contact_message(
     db.commit()
 
     return {"success": True, "message": "Contact message deleted"}
+
+
+# =============================================================================
+# Legal Hold Management (Admin only)
+# =============================================================================
+
+@router.post("/users/{user_id}/legal-hold")
+async def set_legal_hold(
+    user_id: int,
+    reason: str = Query(..., min_length=1, description="Reason for legal hold"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    Place a legal hold on a user account.
+    Prevents account deletion and data purging while active.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.legal_hold = True
+    user.legal_hold_reason = reason
+    user.legal_hold_set_at = now_naive()
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Legal hold placed on user {user_id}",
+        "user_id": user_id,
+        "reason": reason,
+        "set_at": user.legal_hold_set_at.isoformat()
+    }
+
+
+@router.delete("/users/{user_id}/legal-hold")
+async def remove_legal_hold(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """Remove legal hold from a user account."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.legal_hold = False
+    user.legal_hold_reason = None
+    user.legal_hold_set_at = None
+    db.commit()
+
+    return {"success": True, "message": f"Legal hold removed from user {user_id}"}
+
+
+@router.get("/legal-holds")
+async def list_legal_holds(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """List all users currently under legal hold."""
+    users = db.query(User).filter(User.legal_hold == True).all()
+    return [
+        {
+            "user_id": u.id,
+            "email": u.email,
+            "name": u.name,
+            "reason": u.legal_hold_reason,
+            "set_at": u.legal_hold_set_at.isoformat() if u.legal_hold_set_at else None,
+        }
+        for u in users
+    ]

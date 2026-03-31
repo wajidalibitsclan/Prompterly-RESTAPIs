@@ -3,7 +3,7 @@ Lounge and LoungeMembership models
 """
 from sqlalchemy import (
     Column, Integer, String, ForeignKey,
-    Enum as SQLEnum, Text, Boolean, DateTime
+    Enum as SQLEnum, Text, Boolean, DateTime, JSON
 )
 from sqlalchemy.orm import relationship
 from enum import Enum
@@ -46,6 +46,8 @@ class Lounge(Base):
     profile_image_id = Column(Integer, ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
     about = Column(Text, nullable=True)  # Bullet points about the lounge (stored as JSON array)
     brand_color = Column(String(7), nullable=True, default="#9ECCF2")  # Hex color code for lounge card
+    is_featured = Column(Boolean, default=False, nullable=False)  # Admin-flagged featured lounge
+    is_trending = Column(Boolean, default=False, nullable=False)  # Admin/auto trending lounge
     created_at = Column(DateTime, default=now_naive, nullable=False)
 
     # Stripe subscription fields for paid lounges
@@ -137,3 +139,36 @@ class LoungeMembership(Base):
             f"user_id={self.user_id}, "
             f"active={self.is_active})>"
         )
+
+
+class LoungeConfigVersion(Base):
+    """
+    Immutable versioned configuration for a Coaching Lounge.
+    Each time a mentor/admin modifies lounge settings, a new version is created.
+    Previous versions are preserved and never overwritten.
+    Chat sessions reference the config version used to generate responses.
+    """
+
+    __tablename__ = "lounge_config_versions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    lounge_id = Column(Integer, ForeignKey("lounges.id"), nullable=False, index=True)
+    version_number = Column(Integer, nullable=False)
+    # Snapshot of configuration at this version
+    system_prompt = Column(Text, nullable=True)
+    mentor_framework = Column(Text, nullable=True)
+    prompt_templates = Column(JSON, nullable=True)
+    behavioural_guardrails = Column(Text, nullable=True)
+    tone_config = Column(JSON, nullable=True)  # persona, tone settings
+    ai_model = Column(String(100), nullable=True)  # model used at this version
+    # Metadata
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # admin/mentor who made the change
+    change_notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)  # current active version
+    created_at = Column(DateTime, default=now_naive, nullable=False)
+
+    # Relationships
+    lounge = relationship("Lounge", backref="config_versions")
+
+    def __repr__(self):
+        return f"<LoungeConfigVersion(id={self.id}, lounge={self.lounge_id}, v={self.version_number})>"

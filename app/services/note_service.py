@@ -12,6 +12,7 @@ import asyncio
 from app.db.models.note import Note, TimeCapsule, CapsuleStatus
 from app.core.timezone import now_naive, now
 from app.services.ai_service import ai_service
+from app.core.encryption import encrypt_content, decrypt_content
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class NoteService:
             lounge_id=lounge_id,
             section=section,
             title=title,
-            content=content,
+            content=encrypt_content(content),
             is_pinned=is_pinned,
             is_included_in_rag=is_included_in_rag,
             tags=tags or []
@@ -130,7 +131,7 @@ class NoteService:
             note.title = title
 
         if content is not None:
-            note.content = content
+            note.content = encrypt_content(content)
 
         if is_pinned is not None:
             note.is_pinned = is_pinned
@@ -313,7 +314,7 @@ class NoteService:
             user_id=user_id,
             lounge_id=lounge_id,
             title=title,
-            content=content,
+            content=encrypt_content(content),
             unlock_at=unlock_at,
             status=CapsuleStatus.LOCKED
         )
@@ -481,8 +482,8 @@ class NoteService:
             capsule.title = title
         
         if content is not None:
-            capsule.content = content
-        
+            capsule.content = encrypt_content(content)
+
         if unlock_at is not None:
             if unlock_at <= now_naive():
                 raise ValueError("Unlock date must be in the future")

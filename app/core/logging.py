@@ -3,6 +3,7 @@ Logging Configuration for AI Coaching Platform
 Provides structured logging with colors for console and JSON for production
 """
 import logging
+import logging.handlers
 import sys
 from datetime import datetime
 from typing import Optional
@@ -133,12 +134,18 @@ def setup_logging(
 
     root_logger.addHandler(console_handler)
 
-    # File handler (optional)
+    # File handler with rotation (60-day retention per security doc)
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        file_handler = logging.FileHandler(log_file)
+        file_handler = logging.handlers.TimedRotatingFileHandler(
+            log_file,
+            when="midnight",       # Rotate daily
+            interval=1,
+            backupCount=60,        # Keep 60 days of logs
+            encoding="utf-8",
+        )
         file_handler.setLevel(level)
         file_handler.setFormatter(JSONFormatter())  # Always JSON for files
         root_logger.addHandler(file_handler)

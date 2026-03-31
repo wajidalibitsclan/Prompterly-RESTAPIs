@@ -133,7 +133,10 @@ async def list_lounges(
     category_ids: Optional[str] = Query(None, description="Comma-separated list of category IDs"),
     access_type: Optional[AccessType] = None,
     search: Optional[str] = None,
-    mentor_id: Optional[int] = None
+    mentor_id: Optional[int] = None,
+    featured: Optional[bool] = Query(None, description="Filter featured lounges only"),
+    trending: Optional[bool] = Query(None, description="Filter trending lounges only"),
+    sort_by: Optional[str] = Query(None, description="Sort by: newest, oldest, name, popularity")
 ):
     """
     List all lounges
@@ -177,6 +180,22 @@ async def list_lounges(
                 Category.name.ilike(search_term)
             )
         )
+
+    # Featured / Trending filter
+    if featured is True:
+        query = query.filter(Lounge.is_featured == True)
+    if trending is True:
+        query = query.filter(Lounge.is_trending == True)
+
+    # Server-side sorting
+    if sort_by == "newest":
+        query = query.order_by(Lounge.created_at.desc())
+    elif sort_by == "oldest":
+        query = query.order_by(Lounge.created_at.asc())
+    elif sort_by == "name":
+        query = query.order_by(Lounge.title.asc())
+    else:
+        query = query.order_by(Lounge.created_at.desc())  # default: newest
 
     # Get total count before pagination
     total = query.count()
