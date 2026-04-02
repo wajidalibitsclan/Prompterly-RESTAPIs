@@ -204,8 +204,7 @@ Remember: Use the knowledge above when relevant, but also rely on your general c
         try:
             ai_response, metadata = await self.ai_service.generate_chat_response(
                 messages=history,
-                context=system_prompt,
-                use_anthropic=False
+                context=system_prompt
             )
 
             # Save AI response

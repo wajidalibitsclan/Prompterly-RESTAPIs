@@ -1114,7 +1114,7 @@ Return ONLY the title, nothing else."""
             title_response, _ = await self.ai_service.generate_chat_response(
                 messages=[{"role": "user", "content": title_prompt}],
                 context="You are a helpful assistant that generates short, descriptive titles.",
-                use_anthropic=False
+                use_anthropic=True
             )
 
             # Clean up the generated title
@@ -1173,7 +1173,7 @@ Return ONLY the title, nothing else."""
             ai_response, metadata = await self.ai_service.generate_chat_response(
                 messages=history,
                 context=system_prompt,
-                use_anthropic=False
+                use_anthropic=True
             )
 
             # Add RAG sources to metadata
