@@ -25,8 +25,14 @@ from app.schemas.chat import (
     ReplyToInfo,
     FileUploadResponse,
     AIResponseRequest,
-    ChatHistoryResponse
+    ChatHistoryResponse,
+    ThreadSearchRequest,
+    ThreadSearchHit,
+    ThreadSearchResponse,
+    SupportStyleUpdate,
 )
+from app.core.search import matches_query, build_snippet
+from app.core.support_style import is_valid as is_valid_style
 from app.services.chat_service import chat_service
 from app.services.file_service import file_service
 
@@ -74,6 +80,7 @@ async def list_threads(
         
         result.append(ChatThreadResponse(
             id=thread.id,
+            thread_uuid=thread.thread_uuid,
             user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
@@ -81,7 +88,8 @@ async def list_threads(
             created_at=thread.created_at,
             message_count=message_count,
             last_message_at=last_message.created_at if last_message else None,
-            lounge_title=thread.lounge.title if thread.lounge else None
+            lounge_title=thread.lounge.title if thread.lounge else None,
+            support_style=thread.support_style,
         ))
     
     return result
@@ -109,6 +117,7 @@ async def create_thread(
         
         return ChatThreadResponse(
             id=thread.id,
+            thread_uuid=thread.thread_uuid,
             user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
@@ -116,9 +125,10 @@ async def create_thread(
             created_at=thread.created_at,
             message_count=0,
             last_message_at=None,
-            lounge_title=thread.lounge.title if thread.lounge else None
+            lounge_title=thread.lounge.title if thread.lounge else None,
+            support_style=thread.support_style,
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -208,13 +218,15 @@ async def get_thread(
         
         thread_response = ChatThreadResponse(
             id=thread.id,
+            thread_uuid=thread.thread_uuid,
             user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
             status=thread.status,
             created_at=thread.created_at,
             message_count=total_messages,
-            lounge_title=thread.lounge.title if thread.lounge else None
+            lounge_title=thread.lounge.title if thread.lounge else None,
+            support_style=thread.support_style,
         )
         
         return ChatHistoryResponse(
@@ -258,20 +270,132 @@ async def update_thread(
         
         return ChatThreadResponse(
             id=thread.id,
+            thread_uuid=thread.thread_uuid,
             user_uuid=thread.user.user_uuid if thread.user else "",
             lounge_id=thread.lounge_id,
             title=thread.title,
             status=thread.status,
             created_at=thread.created_at,
             message_count=message_count,
-            lounge_title=thread.lounge.title if thread.lounge else None
+            lounge_title=thread.lounge.title if thread.lounge else None,
+            support_style=thread.support_style,
         )
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e)
         )
+
+
+@router.post(
+    "/threads/{thread_id}/search",
+    response_model=ThreadSearchResponse,
+)
+async def search_thread(
+    thread_id: int,
+    search_request: ThreadSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Search within a single chat thread (Security Standard §3 / Task 15).
+
+    Chat message content is encrypted at the application layer with
+    AES-256-GCM + a random nonce per row, so SQL LIKE cannot match
+    ciphertext. This endpoint decrypts the thread's messages **in memory,
+    inside this process only** and returns:
+      - message IDs that match the query
+      - a short snippet of plaintext around each match
+
+    Full plaintext is NOT returned. To render a matching message the
+    client fetches it via GET /chat/threads/{thread_id} using the
+    returned message_id, which goes through the normal authenticated
+    decrypt path.
+
+    The search is scoped to one thread owned by the caller, so an
+    encrypted-content scan cannot touch other users' data.
+    """
+    thread = db.query(ChatThread).filter(
+        ChatThread.id == thread_id,
+        ChatThread.user_id == current_user.id,
+    ).first()
+
+    if thread is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Thread not found",
+        )
+
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.thread_id == thread_id,
+    ).order_by(ChatMessage.created_at.asc()).all()
+
+    hits: List[ThreadSearchHit] = []
+    for msg in messages:
+        plaintext = decrypt_content(msg.content)
+        if not matches_query(plaintext, search_request.query):
+            continue
+        snippet = build_snippet(plaintext, search_request.query)
+        if snippet is None:
+            continue
+        hits.append(ThreadSearchHit(
+            message_id=msg.id,
+            thread_id=thread_id,
+            sender_type=msg.sender_type,
+            created_at=msg.created_at,
+            snippet=snippet,
+        ))
+        if len(hits) >= search_request.limit:
+            break
+
+    return ThreadSearchResponse(
+        thread_id=thread_id,
+        query=search_request.query,
+        total_matches=len(hits),
+        hits=hits,
+    )
+
+
+@router.patch("/threads/{thread_id}/support-style")
+async def update_thread_support_style(
+    thread_id: int,
+    data: SupportStyleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Set the tone mode for this thread (mid-conversation switch).
+
+    Accepts 'motivational' | 'analytical' | 'empathetic' or null. Null
+    clears the per-thread override — subsequent AI replies fall back to
+    the user's account-level preference, then the global default.
+    """
+    if not is_valid_style(data.support_style):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown support style: {data.support_style!r}",
+        )
+
+    thread = db.query(ChatThread).filter(
+        ChatThread.id == thread_id,
+        ChatThread.user_id == current_user.id,
+    ).first()
+
+    if thread is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Thread not found",
+        )
+
+    thread.support_style = data.support_style
+    db.commit()
+    db.refresh(thread)
+
+    return {
+        "thread_id": thread.id,
+        "support_style": thread.support_style,
+    }
 
 
 @router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,0 +1,36 @@
+# Production MySQL hardening — Security Standard §3
+#
+# This file is mounted read-only into the mysql container at
+# /etc/mysql/conf.d/secure.cnf (see docker-compose.prod.yml).
+#
+# The container itself already has no `ports:` mapping, so mysqld is only
+# reachable from other containers on the ai_coaching_network bridge. The
+# settings below are defence-in-depth inside the container.
+
+[mysqld]
+# Bind to all interfaces *inside the container* so the api/worker
+# containers can still connect over the internal docker bridge network.
+# The container namespace has no route to the host or the public
+# internet, so this is not the same as public exposure.
+bind-address = 0.0.0.0
+
+# Never allow the root account over TCP. Root is for `docker exec`
+# local-socket maintenance only.
+skip-name-resolve
+
+# Require TLS for any client connection that identifies itself as such.
+# The api/worker containers use unencrypted TCP on the internal bridge,
+# which is acceptable because the bridge is not routable; operators who
+# need to connect remotely must tunnel over SSH and use --ssl-mode=REQUIRED.
+require_secure_transport = OFF
+
+# Reject empty passwords and enforce the modern auth plugin.
+default_authentication_plugin = caching_sha2_password
+
+# Limit the maximum number of concurrent connections so a misbehaving
+# client cannot exhaust the server.
+max_connections = 200
+
+# Audit-friendly: log every connection attempt (successful or not).
+# Tune this if log volume becomes a problem.
+log_error_verbosity = 2

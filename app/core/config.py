@@ -22,7 +22,17 @@ class Settings(BaseSettings):
     SECRET_KEY: str
 
     # Encryption (AES-256-GCM for chat, notes, capsules)
-    ENCRYPTION_KEY: str = ""  # Set to enable application-level encryption
+    #
+    # Two modes (Security Standard §3 — Task 14):
+    #  1. Production: set AWS_KMS_KEY_ID + AWS_KMS_DATA_KEY_CIPHERTEXT. The
+    #     master key is unwrapped from AWS KMS at startup and lives only in
+    #     process memory. ENCRYPTION_KEY is ignored in this mode.
+    #  2. Dev / CI: leave KMS vars empty and set ENCRYPTION_KEY to any
+    #     passphrase — a 32-byte key is derived via SHA-256. Not allowed when
+    #     APP_ENV=production.
+    ENCRYPTION_KEY: str = ""
+    AWS_KMS_KEY_ID: Optional[str] = None
+    AWS_KMS_DATA_KEY_CIPHERTEXT: Optional[str] = None
 
     # Timezone
     TIMEZONE: str = "Australia/Sydney"  # Australian Eastern Time (AEST/AEDT)

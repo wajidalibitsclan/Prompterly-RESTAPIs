@@ -39,6 +39,10 @@ class Token(BaseModel):
     token_type: str = "bearer"
     requires_2fa: Optional[bool] = None
     temp_token: Optional[str] = None
+    # Which second-factor method the user must use to complete login:
+    # 'totp' (authenticator app) or 'email' (one-time code sent to inbox).
+    # Populated alongside requires_2fa=True.
+    two_factor_method: Optional[str] = None
 
 
 class TokenRefresh(BaseModel):
@@ -188,29 +192,55 @@ class EmailChangeRevert(BaseModel):
 
 
 # 2FA / MFA Schemas
+class TwoFactorSetupRequest(BaseModel):
+    """
+    Request body for POST /auth/2fa/setup.
+
+    Picks which second-factor method the user wants to enrol in:
+      - 'totp'  → authenticator app (Google Authenticator, Authy, 1Password)
+      - 'email' → one-time code sent to the account's email address
+    """
+    method: str = Field("totp", pattern="^(totp|email)$")
+
+
 class TwoFactorSetupResponse(BaseModel):
-    """Response when setting up 2FA — contains secret and QR code"""
-    secret: str
-    qr_code_url: str  # otpauth:// URI for QR code generation
-    qr_code_base64: str  # Base64 encoded QR code image
+    """
+    Response when setting up 2FA.
+
+    For method='totp' the secret + QR code fields are populated so the user
+    can scan it in their authenticator app. For method='email' those fields
+    are empty — the caller shows "check your inbox" instead.
+    """
+    method: str
+    secret: Optional[str] = None
+    qr_code_url: Optional[str] = None
+    qr_code_base64: Optional[str] = None
+    # For email method, tells the UI where we sent the code (masked).
+    email_destination: Optional[str] = None
 
 
 class TwoFactorEnable(BaseModel):
-    """Schema for enabling 2FA — requires a valid TOTP code to confirm setup"""
+    """Schema for enabling 2FA — requires a valid code to confirm setup."""
     code: str = Field(..., min_length=6, max_length=6)
 
 
 class TwoFactorDisable(BaseModel):
-    """Schema for disabling 2FA — requires password and TOTP code"""
+    """Schema for disabling 2FA — requires password and current code."""
     password: str
     code: str = Field(..., min_length=6, max_length=6)
 
 
 class TwoFactorVerify(BaseModel):
-    """Schema for verifying 2FA during login"""
+    """Schema for verifying 2FA during login."""
     email: EmailStr
     code: str = Field(..., min_length=6, max_length=6)
     temp_token: str  # Temporary token issued after password verification
+
+
+class TwoFactorEmailResend(BaseModel):
+    """Schema for re-sending an email OTP during the login flow."""
+    email: EmailStr
+    temp_token: str
 
 
 # =============================================================================

@@ -12,8 +12,10 @@ from app.db.models.chat import ChatThread, ChatMessage, SenderType, ThreadStatus
 from app.db.models.note import Note
 from app.db.models.lounge import Lounge, LoungeMembership
 from app.db.models.mentor import Mentor
+from app.db.models.user import User
 from app.services.ai_service import ai_service
 from app.core.encryption import encrypt_content, decrypt_content
+from app.core.support_style import resolve_style
 from app.services.knowledge_base_service import knowledge_base_service
 
 logger = logging.getLogger(__name__)
@@ -63,18 +65,30 @@ class ChatService:
                 ChatThread.user_id == user_id
             ).scalar()
             title = f"Conversation {thread_count + 1}"
-        
+
+        # Snapshot the user's tone preference onto the new thread so the
+        # sidebar label in the UI always matches the tone the AI will
+        # actually use. Without this, a thread created with
+        # support_style=NULL would display the global default in the UI
+        # but resolve to user.support_style on the backend — a confusing
+        # mismatch. Per-thread override semantics are preserved: users
+        # can still switch mid-conversation via the sidebar.
+        inherited_style = db.query(User.support_style).filter(
+            User.id == user_id
+        ).scalar()
+
         thread = ChatThread(
             user_id=user_id,
             lounge_id=lounge_id,
             title=title,
-            status=ThreadStatus.OPEN
+            status=ThreadStatus.OPEN,
+            support_style=inherited_style,
         )
-        
+
         db.add(thread)
         db.commit()
         db.refresh(thread)
-        
+
         return thread
     
     async def send_message(
@@ -159,8 +173,11 @@ class ChatService:
                         lounge_id=thread.lounge_id
                     )
 
-                # Build system prompt with lounge context and RAG
-                system_prompt = self._build_system_prompt(lounge_context, rag_context)
+                # Build system prompt with lounge context, RAG, and tone mode.
+                thread_style, user_style = self._resolve_thread_style_prefs(thread, db)
+                system_prompt = self._build_system_prompt(
+                    lounge_context, rag_context, thread_style, user_style
+                )
 
                 # Generate AI response
                 ai_response, metadata = await self.ai_service.generate_chat_response(
@@ -281,8 +298,11 @@ class ChatService:
                     lounge_id=thread.lounge_id
                 )
 
-            # Build system prompt
-            system_prompt = self._build_system_prompt(lounge_context, rag_context)
+            # Build system prompt (includes tone-mode snippet).
+            thread_style, user_style = self._resolve_thread_style_prefs(thread, db)
+            system_prompt = self._build_system_prompt(
+                lounge_context, rag_context, thread_style, user_style
+            )
 
             # Stream AI response
             full_response = ""
@@ -434,17 +454,39 @@ class ChatService:
 
         return context
 
+    def _resolve_thread_style_prefs(
+        self,
+        thread: ChatThread,
+        db: Session,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Return ``(thread_style, user_style)`` for prompt assembly.
+
+        Both fields may be None — the prompt builder's resolver falls
+        through to the global default in that case.
+        """
+        user_style: Optional[str] = None
+        if thread.user_id:
+            user = db.query(User.support_style).filter(User.id == thread.user_id).first()
+            if user is not None:
+                user_style = user[0]
+        return thread.support_style, user_style
+
     def _build_system_prompt(
         self,
         lounge_context: Dict[str, Any],
-        rag_context: Optional[str]
+        rag_context: Optional[str],
+        thread_support_style: Optional[str] = None,
+        user_support_style: Optional[str] = None,
     ) -> str:
         """
-        Build system prompt with lounge context and RAG knowledge
+        Build system prompt with lounge context and RAG knowledge.
 
         Args:
             lounge_context: Lounge and mentor information
             rag_context: RAG retrieved context
+            thread_support_style: Per-thread tone override, if any
+            user_support_style: Account-level tone preference
 
         Returns:
             Complete system prompt
@@ -571,6 +613,13 @@ Communication Style:
 - Provide practical, actionable advice within your domain
 - Ask thoughtful follow-up questions
 - Acknowledge their feelings and validate their experiences""")
+
+        # Append the selected tone mode at the end so it wins any conflicting
+        # "communication style" instruction above without rewriting them.
+        # Resolver tolerates Nones — an unconfigured pipeline gets the
+        # global default (motivational).
+        style = resolve_style(thread_support_style, user_support_style)
+        prompt_parts.append(style.prompt_snippet)
 
         return "\n\n".join(prompt_parts)
 
@@ -1008,8 +1057,11 @@ Communication Style:
                 lounge_id=thread.lounge_id
             )
 
-            # Build system prompt
-            system_prompt = self._build_system_prompt(lounge_context, rag_context)
+            # Build system prompt (includes tone-mode snippet).
+            thread_style, user_style = self._resolve_thread_style_prefs(thread, db)
+            system_prompt = self._build_system_prompt(
+                lounge_context, rag_context, thread_style, user_style
+            )
 
             # Stream AI response
             full_response = ""
@@ -1166,8 +1218,11 @@ Return ONLY the title, nothing else."""
                 lounge_id=thread.lounge_id
             )
 
-            # Build system prompt
-            system_prompt = self._build_system_prompt(lounge_context, rag_context)
+            # Build system prompt (includes tone-mode snippet).
+            thread_style, user_style = self._resolve_thread_style_prefs(thread, db)
+            system_prompt = self._build_system_prompt(
+                lounge_context, rag_context, thread_style, user_style
+            )
 
             # Generate AI response
             ai_response, metadata = await self.ai_service.generate_chat_response(

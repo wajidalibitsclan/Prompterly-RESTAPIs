@@ -1,6 +1,7 @@
 """
 Chat models - Thread and Message
 """
+import uuid as uuid_lib
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, ForeignKey,
@@ -31,6 +32,16 @@ class ChatThread(Base):
     __tablename__ = "chat_threads"
     
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    # Non-enumerable external identifier. Integer `id` stays the internal
+    # FK target for speed, but anything user-visible (URLs, share links,
+    # webhooks, etc.) should use `thread_uuid` per Security Standard §2.1.
+    thread_uuid = Column(
+        String(36),
+        unique=True,
+        index=True,
+        nullable=False,
+        default=lambda: str(uuid_lib.uuid4()),
+    )
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     lounge_id = Column(Integer, ForeignKey("lounges.id"), nullable=True)
     title = Column(String(255), nullable=True)
@@ -40,6 +51,10 @@ class ChatThread(Base):
         nullable=False
     )
     config_version_id = Column(Integer, ForeignKey("lounge_config_versions.id"), nullable=True)  # Which config version was used
+    # Per-thread tone-mode override. NULL means "use the user's account-level
+    # preference". Lets the user flip tone mid-conversation without touching
+    # their account default.
+    support_style = Column(String(24), nullable=True)
     created_at = Column(DateTime, default=now_naive, nullable=False)
 
     # Relationships

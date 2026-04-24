@@ -12,7 +12,7 @@ import time
 
 from app.db.session import get_db
 from app.core.timezone import now_naive
-from app.core.jwt import get_current_admin
+from app.core.jwt import get_current_admin, get_current_admin_mfa
 from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
 from app.db.models.lounge import Lounge, LoungeMembership, AccessType
@@ -346,13 +346,15 @@ async def delete_user(
 @router.get("/activity", response_model=List[UserActivityResponse])
 async def get_user_activity(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin),
+    admin_user: User = Depends(get_current_admin_mfa),
     days: int = Query(30, ge=1, le=90)
 ):
     """
     Get user activity report
-    
-    - Requires admin role
+
+    - Requires admin role AND an MFA-verified session (Security Standard S.2.4).
+      This endpoint joins identity (name, email) with user content (chat
+      messages, notes, lounge memberships), so it must be gated behind MFA.
     - Shows most active users
     """
     since_date = now_naive() - timedelta(days=days)

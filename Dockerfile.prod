@@ -56,13 +56,18 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run with Gunicorn + Uvicorn workers
+# Run with Gunicorn + Uvicorn workers.
+# --forwarded-allow-ips="*" lets the uvicorn worker trust X-Forwarded-*
+# headers from the nginx reverse proxy, so request.url.scheme correctly
+# reports "https" and rate limiting / logging see the real client IP
+# (Security Standard §3 — Encryption In Transit).
 CMD ["gunicorn", "app.main:app", \
      "--workers", "4", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", \
      "--timeout", "120", \
      "--keepalive", "5", \
+     "--forwarded-allow-ips", "*", \
      "--access-logfile", "/app/logs/access.log", \
      "--error-logfile", "/app/logs/error.log", \
      "--log-level", "info"]

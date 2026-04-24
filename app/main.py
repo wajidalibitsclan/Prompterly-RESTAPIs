@@ -8,6 +8,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from contextlib import asynccontextmanager
 from pathlib import Path
 import time
@@ -43,6 +44,20 @@ async def lifespan(app: FastAPI):
     logger.info(f"API Prefix: {settings.API_V1_PREFIX}")
     logger.info(f"CORS Origins: {settings.CORS_ORIGINS}")
     logger.info("=" * 60)
+
+    # Validate the encryption master key is reachable before accepting traffic.
+    # In production this forces a real AWS KMS Decrypt call; in dev it
+    # derives the local key from ENCRYPTION_KEY. Failing here is intentional
+    # — we refuse to run with broken at-rest encryption (Security Standard §3).
+    try:
+        from app.core.kms import get_master_key
+        get_master_key()
+        logger.info("Master encryption key loaded")
+    except Exception as e:
+        if settings.APP_ENV == "production":
+            logger.error(f"KMS master key unavailable: {e}", exc_info=True)
+            raise
+        logger.warning(f"KMS master key unavailable (dev mode): {e}")
 
     # Initialize database
     try:
@@ -86,6 +101,15 @@ app = FastAPI(
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# Enforce HTTPS in production (Security Standard §3 — Encryption In Transit).
+# Nginx already redirects HTTP→HTTPS at the edge; this middleware is a
+# defence-in-depth layer in case the app is ever exposed without nginx.
+# Uvicorn must be run with --forwarded-allow-ips so X-Forwarded-Proto from
+# nginx is trusted and request.url.scheme reports the real scheme.
+if settings.APP_ENV == "production":
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 
 # Add CORS middleware
@@ -323,7 +347,7 @@ async def root():
 # API Routers
 # =============================================================================
 
-from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin, knowledge_base, contact, public_chatbot, newsletter, landing
+from app.api.v1 import auth, users, mentors, lounges, chat, notes, capsules, billing, notifications, cms, admin, knowledge_base, contact, public_chatbot, newsletter, landing, support_styles
 
 # Include API v1 routers
 api_v1_prefix = settings.API_V1_PREFIX
@@ -344,6 +368,7 @@ app.include_router(contact.router, prefix=f"{api_v1_prefix}/contact", tags=["Con
 app.include_router(public_chatbot.router, prefix=api_v1_prefix, tags=["Public Chatbot"])
 app.include_router(newsletter.router, prefix=api_v1_prefix, tags=["Newsletter"])
 app.include_router(landing.router, prefix=f"{api_v1_prefix}/landing", tags=["Landing Page & Dashboard"])
+app.include_router(support_styles.router, prefix=f"{api_v1_prefix}/support-styles", tags=["Support Styles"])
 
 logger.info(f"Registered {len(app.routes)} routes")
 

@@ -22,21 +22,48 @@ class ChatThreadUpdate(BaseModel):
 class ChatThreadResponse(BaseModel):
     """Schema for chat thread response — uses user_uuid for pseudonymisation"""
     id: int
+    thread_uuid: str  # Non-enumerable external id. Use this in URLs.
     user_uuid: str  # Pseudonymous identifier (not user_id)
     lounge_id: Optional[int]
     title: Optional[str]
     status: ThreadStatus
     created_at: datetime
-    
+
     # Stats
     message_count: int = 0
     last_message_at: Optional[datetime] = None
-    
+
     # Lounge info if applicable
     lounge_title: Optional[str] = None
-    
+
+    # Tone mode for AI coaching replies on this thread ('motivational' |
+    # 'analytical' | 'empathetic'). NULL means the user's account default.
+    support_style: Optional[str] = None
+
     class Config:
         from_attributes = True
+
+
+class SupportStyleUpdate(BaseModel):
+    """Schema for changing the tone mode of a single thread or user preference."""
+    support_style: Optional[str] = Field(
+        None,
+        description="Tone slug ('motivational' | 'analytical' | 'empathetic'). "
+                    "Null clears any override and falls back to the account default.",
+    )
+
+
+class SupportStyleOption(BaseModel):
+    """Single option in the catalogue served by GET /support-styles."""
+    slug: str
+    name: str
+    description: str
+
+
+class SupportStyleCatalogueResponse(BaseModel):
+    """Response for GET /support-styles — the full catalogue + default slug."""
+    default: str
+    styles: List[SupportStyleOption]
 
 
 class MessageCreate(BaseModel):
@@ -118,3 +145,30 @@ class ChatHistoryResponse(BaseModel):
     thread: ChatThreadResponse
     messages: List[MessageResponse]
     total_messages: int
+
+
+class ThreadSearchRequest(BaseModel):
+    """Schema for searching within a single chat thread."""
+    query: str = Field(..., min_length=1, max_length=200)
+    limit: int = Field(50, ge=1, le=200)
+
+
+class ThreadSearchHit(BaseModel):
+    """
+    A single match inside a chat thread. Only a short snippet of plaintext
+    is returned — clients fetch the full message via the normal thread
+    history endpoint when the user clicks the hit.
+    """
+    message_id: int
+    thread_id: int
+    sender_type: SenderType
+    created_at: datetime
+    snippet: str
+
+
+class ThreadSearchResponse(BaseModel):
+    """Schema for thread-level search response."""
+    thread_id: int
+    query: str
+    total_matches: int
+    hits: List[ThreadSearchHit]

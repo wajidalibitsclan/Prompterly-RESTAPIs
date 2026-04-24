@@ -23,6 +23,8 @@ from app.schemas.auth import (
     NotificationPreferencesResponse,
     PrivacyAcceptance,
 )
+from app.schemas.chat import SupportStyleUpdate
+from app.core.support_style import DEFAULT_STYLE, is_valid as is_valid_style
 from app.services.file_service import file_service
 
 router = APIRouter()
@@ -311,6 +313,52 @@ async def update_notification_preferences(
     db.refresh(current_user)
 
     return current_user
+
+
+@router.get("/me/settings/support-style")
+async def get_support_style_preference(
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Return the account-level tone preference.
+
+    Falls back to the global default when the user hasn't explicitly picked
+    a tone, so the UI can always render a sensible selection.
+    """
+    return {
+        "support_style": current_user.support_style or DEFAULT_STYLE,
+        "explicit": current_user.support_style is not None,
+    }
+
+
+@router.put("/me/settings/support-style")
+async def update_support_style_preference(
+    data: SupportStyleUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update the account-level tone preference.
+
+    Accepts a known slug or null (null clears the override and falls back
+    to the global default). Invalid slugs are rejected with 400 — we don't
+    store values that prompt assembly doesn't know how to render.
+    """
+    if not is_valid_style(data.support_style):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown support style: {data.support_style!r}",
+        )
+
+    current_user.support_style = data.support_style
+    current_user.updated_at = now_naive()
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "support_style": current_user.support_style or DEFAULT_STYLE,
+        "explicit": current_user.support_style is not None,
+    }
 
 
 @router.get("/me/settings/privacy")

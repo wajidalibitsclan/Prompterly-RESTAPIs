@@ -13,6 +13,7 @@ from app.db.models.note import Note, TimeCapsule, CapsuleStatus
 from app.core.timezone import now_naive, now
 from app.services.ai_service import ai_service
 from app.core.encryption import encrypt_content, decrypt_content
+from app.core.search import matches_query
 
 logger = logging.getLogger(__name__)
 
@@ -162,42 +163,55 @@ class NoteService:
         limit: int = 20
     ) -> List[Note]:
         """
-        Search notes
-        
-        Args:
-            user_id: User ID
-            query: Search query
-            db: Database session
-            tags: Filter by tags
-            limit: Maximum results
-            
-        Returns:
-            List of matching notes
+        Search the caller's notes (Security Standard §3 / Task 15).
+
+        Note content is encrypted with AES-256-GCM + a random nonce per row,
+        so SQL LIKE cannot match ciphertext. This method:
+          1. Pre-filters at the DB level by user_id and tags.
+          2. Matches the title in SQL (titles are not encrypted).
+          3. For any candidate that didn't match by title, decrypts the
+             content in memory and runs a substring match.
+        Decrypted plaintext is only held on the stack for the duration of
+        the search and is never logged.
         """
-        # Build base query
         base_query = db.query(Note).filter(Note.user_id == user_id)
-        
-        # Filter by tags if provided
+
         if tags:
-            # In production, use proper JSON querying
-            # For now, simple string matching
             for tag in tags:
-                base_query = base_query.filter(
-                    Note.tags.contains([tag])
-                )
-        
-        # Search in title and content
-        search_term = f"%{query}%"
-        results = base_query.filter(
-            or_(
-                Note.title.ilike(search_term),
-                Note.content.ilike(search_term)
-            )
+                base_query = base_query.filter(Note.tags.contains([tag]))
+
+        title_term = f"%{query}%"
+
+        # Fast path: title matches come back directly from SQL.
+        title_hits = base_query.filter(
+            Note.title.ilike(title_term)
         ).order_by(
             Note.is_pinned.desc(),
-            Note.updated_at.desc()
+            Note.updated_at.desc(),
         ).limit(limit).all()
-        
+
+        hit_ids = {n.id for n in title_hits}
+        results: List[Note] = list(title_hits)
+
+        if len(results) >= limit:
+            return results[:limit]
+
+        # Slow path: scan remaining notes for this user, decrypt in memory,
+        # and match against plaintext content. Ordered by pinned/updated so
+        # the most relevant candidates are evaluated first.
+        remaining = base_query.filter(
+            ~Note.id.in_(hit_ids) if hit_ids else True
+        ).order_by(
+            Note.is_pinned.desc(),
+            Note.updated_at.desc(),
+        ).all()
+
+        for note in remaining:
+            if matches_query(decrypt_content(note.content), query):
+                results.append(note)
+                if len(results) >= limit:
+                    break
+
         return results
     
     async def get_pinned_notes(

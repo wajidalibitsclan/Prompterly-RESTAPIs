@@ -7,6 +7,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import timedelta
+from typing import Any, Dict
 import httpx
 import random
 import string
@@ -55,6 +56,14 @@ from app.services.email_service import (
     send_email_change_alert_sync,
     send_suspicious_login_alert_sync,
 )
+from app.core.email_2fa import (
+    issue_email_code,
+    verify_email_code,
+    clear_email_code,
+    mask_email,
+    PURPOSE_SETUP,
+    PURPOSE_LOGIN,
+)
 from app.schemas.auth import (
     UserRegister,
     Token,
@@ -68,10 +77,12 @@ from app.schemas.auth import (
     EmailChangeRequest,
     EmailChangeVerify,
     EmailChangeRevert,
+    TwoFactorSetupRequest,
     TwoFactorSetupResponse,
     TwoFactorEnable,
     TwoFactorDisable,
     TwoFactorVerify,
+    TwoFactorEmailResend,
 )
 
 router = APIRouter()
@@ -389,20 +400,33 @@ async def login(
         log_auth_event(logger, "LOGIN", form_data.username, False, client_ip, "Account inactive")
         raise AccountInactiveError()
 
-    # If 2FA is enabled, return a temporary token and require TOTP verification
+    # If 2FA is enabled, return a temporary token and require a second-factor
+    # verification. For email-method users we also issue + send a fresh OTP
+    # right here so the inbox has the code by the time the UI loads.
     if user.is_2fa_enabled:
+        # Default to 'totp' for legacy rows written before two_factor_method
+        # existed (they only had a TOTP secret).
+        method = user.two_factor_method or "totp"
         temp_token = create_access_token(
             data={"sub": str(user.id), "purpose": "2fa_pending"},
             expires_delta=timedelta(minutes=5)
         )
+
+        if method == "email":
+            code = issue_email_code(user, db, PURPOSE_LOGIN)
+            background_tasks.add_task(
+                send_otp_email_sync, user.email, user.name, code
+            )
+
         log_auth_event(logger, "LOGIN_2FA_PENDING", user.email, True, client_ip)
-        logger.info(f"2FA required for user: {user.email}")
+        logger.info(f"2FA required for user: {user.email} method={method}")
         return {
             "access_token": "",
             "refresh_token": "",
             "token_type": "bearer",
             "requires_2fa": True,
-            "temp_token": temp_token
+            "temp_token": temp_token,
+            "two_factor_method": method,
         }
 
     # Check for new device BEFORE creating the session
@@ -486,9 +510,14 @@ async def refresh_token(
         logger.warning(f"Token refresh for non-existent user ID: {user_id}")
         raise UserNotFoundError()
 
-    # Create new tokens (sub must be a string per JWT spec)
-    access_token = create_access_token(data={"sub": str(user.id)})
-    new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
+    # Create new tokens (sub must be a string per JWT spec).
+    # Preserve `mfa_verified` so an MFA-established session stays MFA-verified
+    # after a refresh, per Security Standard S.2.4.
+    new_claims: Dict[str, Any] = {"sub": str(user.id)}
+    if payload.get("mfa_verified"):
+        new_claims["mfa_verified"] = True
+    access_token = create_access_token(data=new_claims)
+    new_refresh_token = create_refresh_token(data=new_claims)
 
     logger.info(f"Token refreshed for user: {user.email} (ID: {user.id})")
 
@@ -1234,54 +1263,92 @@ async def revert_email_change(
 @limiter.limit(AUTH)
 async def setup_2fa(
     request: Request,
+    setup_data: TwoFactorSetupRequest = TwoFactorSetupRequest(),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
 ):
     """
-    Step 1: Generate TOTP secret and QR code for 2FA setup.
+    Step 1 of 2FA enrolment — begin setup for the requested method.
 
-    - Returns a base32 secret, an otpauth:// URI, and a base64 QR code image
-    - User should scan QR code with Google Authenticator / Authy
-    - Secret is stored but 2FA is NOT enabled until /2fa/enable is called
+    For ``method='totp'``: generates a fresh TOTP secret, returns the
+    base32 secret + otpauth:// URI + base64 QR code image for the user to
+    scan with an authenticator app.
+
+    For ``method='email'``: issues a 6-digit one-time code, stores its
+    hash on the user row (purpose=setup, TTL 5 min), and emails it to the
+    account address. The response includes a masked email so the UI can
+    tell the user where the code went.
+
+    In both cases 2FA is NOT enabled until the user completes /2fa/enable
+    with a valid code.
     """
     client_ip = get_client_ip(request)
-    logger.info(f"2FA setup request from user {current_user.email} IP: {client_ip}")
+    method = setup_data.method
+    logger.info(f"2FA setup request ({method}) from user {current_user.email} IP: {client_ip}")
 
-    # Generate a new TOTP secret
-    secret = pyotp.random_base32()
+    if method == "totp":
+        # Generate a new TOTP secret.
+        secret = pyotp.random_base32()
+        current_user.totp_secret = secret
+        # Clear any outstanding email code from a previous attempt — we're
+        # switching methods this setup round.
+        clear_email_code(current_user, db)
 
-    # Store the secret (not yet enabled)
-    current_user.totp_secret = secret
-    db.commit()
+        totp = pyotp.TOTP(secret)
+        provisioning_uri = totp.provisioning_uri(
+            name=current_user.email,
+            issuer_name="Prompterly",
+        )
 
-    # Generate otpauth URI
-    totp = pyotp.TOTP(secret)
-    provisioning_uri = totp.provisioning_uri(
-        name=current_user.email,
-        issuer_name="Prompterly"
-    )
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(provisioning_uri)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
 
-    # Generate QR code as base64 image
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=10,
-        border=4,
-    )
-    qr.add_data(provisioning_uri)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        qr_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    qr_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        log_auth_event(logger, "2FA_SETUP_TOTP", current_user.email, True, client_ip)
 
-    log_auth_event(logger, "2FA_SETUP", current_user.email, True, client_ip)
+        return {
+            "method": "totp",
+            "secret": secret,
+            "qr_code_url": provisioning_uri,
+            "qr_code_base64": f"data:image/png;base64,{qr_base64}",
+            "email_destination": None,
+        }
+
+    # method == "email"
+    # Clear any half-set-up TOTP secret from an earlier attempt — we're
+    # enrolling into the email path now.
+    current_user.totp_secret = None
+    code = issue_email_code(current_user, db, PURPOSE_SETUP)
+
+    if background_tasks is not None:
+        background_tasks.add_task(
+            send_otp_email_sync,
+            current_user.email,
+            current_user.name,
+            code,
+        )
+    else:  # pragma: no cover — background_tasks is always injected by FastAPI
+        send_otp_email_sync(current_user.email, current_user.name, code)
+
+    log_auth_event(logger, "2FA_SETUP_EMAIL", current_user.email, True, client_ip)
 
     return {
-        "secret": secret,
-        "qr_code_url": provisioning_uri,
-        "qr_code_base64": f"data:image/png;base64,{qr_base64}"
+        "method": "email",
+        "secret": None,
+        "qr_code_url": None,
+        "qr_code_base64": None,
+        "email_destination": mask_email(current_user.email),
     }
 
 
@@ -1294,38 +1361,71 @@ async def enable_2fa(
     db: Session = Depends(get_db)
 ):
     """
-    Step 2: Verify TOTP code and enable 2FA.
+    Step 2 of 2FA enrolment — confirm a setup code and flip 2FA on.
 
-    - Validates the code from the authenticator app
-    - Enables 2FA on the account
-    - Must be called after /2fa/setup
+    Branches on whichever method the user initiated via /auth/2fa/setup:
+      - If `totp_secret` is set but 2FA is off → TOTP enrolment in progress
+      - If there's an outstanding purpose=setup email code → email enrolment
+    On success, `two_factor_method` is stored so subsequent logins know
+    which code path to use.
     """
     client_ip = get_client_ip(request)
     logger.info(f"2FA enable request from user {current_user.email} IP: {client_ip}")
 
-    if not current_user.totp_secret:
-        raise InvalidTokenError(
-            message="Please set up 2FA first using /auth/2fa/setup",
-            token_type="totp"
-        )
-
     if current_user.is_2fa_enabled:
         return {"message": "Two-factor authentication is already enabled"}
 
-    # Verify the TOTP code
-    totp = pyotp.TOTP(current_user.totp_secret)
-    if not totp.verify(data.code, valid_window=1):
-        log_auth_event(logger, "2FA_ENABLE", current_user.email, False, client_ip, "Invalid TOTP code")
-        raise InvalidTokenError(message="Invalid verification code. Please try again.", token_type="totp")
+    # Decide which setup flow is in progress. Email setup takes precedence
+    # because a purpose=setup email code is explicitly one-shot — if it's
+    # present, the user just clicked "enable" in the email branch of the UI.
+    has_email_setup = (
+        current_user.email_2fa_code_hash is not None
+        and current_user.email_2fa_purpose == PURPOSE_SETUP
+    )
+    has_totp_setup = current_user.totp_secret is not None
 
-    # Enable 2FA
-    current_user.is_2fa_enabled = True
-    db.commit()
+    if has_email_setup:
+        if not verify_email_code(current_user, data.code, PURPOSE_SETUP):
+            log_auth_event(
+                logger, "2FA_ENABLE_EMAIL", current_user.email, False,
+                client_ip, "Invalid email OTP",
+            )
+            raise InvalidTokenError(
+                message="Invalid or expired verification code. Please try again.",
+                token_type="email_otp",
+            )
+        # Success — enable 2FA, record the method, consume the OTP.
+        current_user.is_2fa_enabled = True
+        current_user.two_factor_method = "email"
+        current_user.totp_secret = None  # defensive — shouldn't be set
+        clear_email_code(current_user, db)
+        log_auth_event(logger, "2FA_ENABLE_EMAIL", current_user.email, True, client_ip)
+        logger.info(f"Email 2FA enabled for user: {current_user.email}")
+        return {"message": "Two-factor authentication (email) has been enabled"}
 
-    log_auth_event(logger, "2FA_ENABLE", current_user.email, True, client_ip)
-    logger.info(f"2FA enabled for user: {current_user.email}")
+    if has_totp_setup:
+        totp = pyotp.TOTP(current_user.totp_secret)
+        if not totp.verify(data.code, valid_window=1):
+            log_auth_event(
+                logger, "2FA_ENABLE_TOTP", current_user.email, False,
+                client_ip, "Invalid TOTP code",
+            )
+            raise InvalidTokenError(
+                message="Invalid verification code. Please try again.",
+                token_type="totp",
+            )
+        current_user.is_2fa_enabled = True
+        current_user.two_factor_method = "totp"
+        db.commit()
+        log_auth_event(logger, "2FA_ENABLE_TOTP", current_user.email, True, client_ip)
+        logger.info(f"TOTP 2FA enabled for user: {current_user.email}")
+        return {"message": "Two-factor authentication (authenticator app) has been enabled"}
 
-    return {"message": "Two-factor authentication has been enabled successfully"}
+    # Neither flow is in progress — the caller skipped /2fa/setup.
+    raise InvalidTokenError(
+        message="Please start 2FA setup first using /auth/2fa/setup",
+        token_type="totp",
+    )
 
 
 @router.post("/2fa/disable", status_code=status.HTTP_200_OK)
@@ -1333,14 +1433,18 @@ async def enable_2fa(
 async def disable_2fa(
     data: TwoFactorDisable,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Disable 2FA on the account.
 
-    - Requires current password and a valid TOTP code for security
-    - Removes TOTP secret and disables 2FA
+    Requires the current password **and** a valid second-factor code.
+    The code may be either a TOTP value (for method='totp' accounts) or
+    an emailed OTP (for method='email' accounts). For the email path the
+    client must first POST /auth/2fa/email/disable-code to trigger
+    sending — we cannot gate disable on an active login-stage code.
     """
     client_ip = get_client_ip(request)
     logger.info(f"2FA disable request from user {current_user.email} IP: {client_ip}")
@@ -1348,26 +1452,75 @@ async def disable_2fa(
     if not current_user.is_2fa_enabled:
         return {"message": "Two-factor authentication is not enabled"}
 
-    # Verify password
     if not verify_password(data.password, current_user.password_hash):
         log_auth_event(logger, "2FA_DISABLE", current_user.email, False, client_ip, "Invalid password")
         raise InvalidCredentialsError(message="Incorrect password")
 
-    # Verify TOTP code
-    totp = pyotp.TOTP(current_user.totp_secret)
-    if not totp.verify(data.code, valid_window=1):
-        log_auth_event(logger, "2FA_DISABLE", current_user.email, False, client_ip, "Invalid TOTP code")
-        raise InvalidTokenError(message="Invalid verification code", token_type="totp")
+    method = current_user.two_factor_method or "totp"
 
-    # Disable 2FA
+    if method == "email":
+        if not verify_email_code(current_user, data.code, PURPOSE_SETUP):
+            log_auth_event(
+                logger, "2FA_DISABLE", current_user.email, False,
+                client_ip, "Invalid or expired email OTP",
+            )
+            raise InvalidTokenError(
+                message="Invalid or expired verification code. Request a new one first.",
+                token_type="email_otp",
+            )
+    else:
+        if not current_user.totp_secret:
+            raise InvalidTokenError(
+                message="2FA is in an inconsistent state; please contact support",
+                token_type="totp",
+            )
+        totp = pyotp.TOTP(current_user.totp_secret)
+        if not totp.verify(data.code, valid_window=1):
+            log_auth_event(
+                logger, "2FA_DISABLE", current_user.email, False,
+                client_ip, "Invalid TOTP code",
+            )
+            raise InvalidTokenError(message="Invalid verification code", token_type="totp")
+
+    # Tear down all 2FA state on the user row.
     current_user.is_2fa_enabled = False
+    current_user.two_factor_method = None
     current_user.totp_secret = None
-    db.commit()
+    clear_email_code(current_user, db)
+
+    # Silence the unused-argument warning — background_tasks is kept in the
+    # signature for future "we disabled your 2FA" notification emails.
+    _ = background_tasks
 
     log_auth_event(logger, "2FA_DISABLE", current_user.email, True, client_ip)
     logger.info(f"2FA disabled for user: {current_user.email}")
 
     return {"message": "Two-factor authentication has been disabled"}
+
+
+@router.post("/2fa/email/disable-code", status_code=status.HTTP_200_OK)
+@limiter.limit(STRICT)
+async def send_2fa_disable_email_code(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Send a one-time code to the account email so the user can disable
+    email-method 2FA. Only meaningful when the user's current method is
+    'email' — other cases are a no-op.
+    """
+    client_ip = get_client_ip(request)
+    if (current_user.two_factor_method or "totp") != "email":
+        return {"message": "No email code needed for this method."}
+
+    code = issue_email_code(current_user, db, PURPOSE_SETUP)
+    background_tasks.add_task(
+        send_otp_email_sync, current_user.email, current_user.name, code
+    )
+    log_auth_event(logger, "2FA_DISABLE_CODE_SENT", current_user.email, True, client_ip)
+    return {"message": f"A disable code has been sent to {mask_email(current_user.email)}."}
 
 
 @router.post("/2fa/verify", response_model=Token)
@@ -1404,21 +1557,51 @@ async def verify_2fa(
     if not user:
         raise UserNotFoundError()
 
-    if not user.is_2fa_enabled or not user.totp_secret:
-        raise InvalidTokenError(message="2FA is not enabled on this account", token_type="totp")
+    if not user.is_2fa_enabled:
+        raise InvalidTokenError(
+            message="2FA is not enabled on this account",
+            token_type="totp",
+        )
 
-    # Verify TOTP code
-    totp = pyotp.TOTP(user.totp_secret)
-    if not totp.verify(data.code, valid_window=1):
-        log_auth_event(logger, "2FA_VERIFY", user.email, False, client_ip, "Invalid TOTP code")
-        raise InvalidTokenError(message="Invalid verification code", token_type="totp")
+    # Legacy rows with only a totp_secret default to the TOTP path.
+    method = user.two_factor_method or "totp"
+
+    if method == "email":
+        if not verify_email_code(user, data.code, PURPOSE_LOGIN):
+            log_auth_event(
+                logger, "2FA_VERIFY_EMAIL", user.email, False,
+                client_ip, "Invalid or expired email OTP",
+            )
+            raise InvalidTokenError(
+                message="Invalid or expired verification code",
+                token_type="email_otp",
+            )
+        clear_email_code(user, db)
+    else:
+        if not user.totp_secret:
+            raise InvalidTokenError(
+                message="2FA is not fully configured on this account",
+                token_type="totp",
+            )
+        totp = pyotp.TOTP(user.totp_secret)
+        if not totp.verify(data.code, valid_window=1):
+            log_auth_event(
+                logger, "2FA_VERIFY_TOTP", user.email, False,
+                client_ip, "Invalid TOTP code",
+            )
+            raise InvalidTokenError(
+                message="Invalid verification code",
+                token_type="totp",
+            )
 
     # Check for new device
     new_device = is_new_device(db, user.id, client_ip, user_agent)
 
-    # Create full tokens
-    access_token = create_access_token(data={"sub": str(user.id)})
-    refresh_token = create_refresh_token(data={"sub": str(user.id)})
+    # Create full tokens — stamp `mfa_verified` so downstream admin tools that
+    # link identity with user content (S.2.4) can require an MFA-established session.
+    token_claims = {"sub": str(user.id), "mfa_verified": True}
+    access_token = create_access_token(data=token_claims)
+    refresh_token = create_refresh_token(data=token_claims)
 
     # Create session with device info
     session = UserSession(
@@ -1459,8 +1642,60 @@ async def get_2fa_status(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Check if 2FA is enabled for the current user.
+    Return the current user's 2FA state.
+
+    Includes the selected `two_factor_method` so the UI can render the
+    correct badge ("Authenticator app" vs "Email") and pre-select the
+    right option if the user starts a re-enrolment.
     """
     return {
         "is_2fa_enabled": current_user.is_2fa_enabled,
+        "two_factor_method": current_user.two_factor_method
+            or ("totp" if current_user.is_2fa_enabled and current_user.totp_secret else None),
     }
+
+
+@router.post("/2fa/email/resend", status_code=status.HTTP_200_OK)
+@limiter.limit(STRICT)
+async def resend_2fa_email_code(
+    data: TwoFactorEmailResend,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Re-send an email OTP during the login-stage 2FA flow.
+
+    Called from the "Didn't get the code?" button on the login screen. The
+    caller must present the same `temp_token` they received from /auth/login
+    so an unauthenticated attacker cannot force us to spam arbitrary
+    inboxes. Rate-limited on top of that.
+    """
+    client_ip = get_client_ip(request)
+
+    payload = decode_token(data.temp_token)
+    if not payload or payload.get("purpose") != "2fa_pending":
+        raise InvalidTokenError(
+            message="Invalid or expired temporary token",
+            token_type="2fa_temp",
+        )
+
+    user = db.query(User).filter(
+        User.id == payload.get("sub"),
+        User.email == data.email,
+    ).first()
+    if not user or not user.is_2fa_enabled or (user.two_factor_method or "totp") != "email":
+        # Deliberately vague — don't leak whether the account exists / what
+        # method it uses. The login endpoint already returned requires_2fa
+        # so this is only reachable by someone with a valid temp_token
+        # anyway; the vagueness is defence-in-depth.
+        raise InvalidTokenError(
+            message="Cannot resend code for this account",
+            token_type="email_otp",
+        )
+
+    code = issue_email_code(user, db, PURPOSE_LOGIN)
+    background_tasks.add_task(send_otp_email_sync, user.email, user.name, code)
+
+    log_auth_event(logger, "2FA_EMAIL_RESEND", user.email, True, client_ip)
+    return {"message": "A new verification code has been sent to your email."}

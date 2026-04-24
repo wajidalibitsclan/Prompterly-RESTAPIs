@@ -1,92 +1,107 @@
 """
 Application-level encryption for sensitive user content.
 
-Uses AES-256-GCM for authenticated encryption.
-Key is derived from ENCRYPTION_KEY in settings using PBKDF2.
-Each encrypted value gets a unique random nonce (IV).
+Uses AES-256-GCM for authenticated encryption. The 32-byte master key is
+obtained from `app.core.kms.get_master_key()` — in production this unwraps
+a data key from AWS KMS (Security Standard §3, Task 14). The plaintext key
+lives only in process memory and is never written to the database or disk.
 
-Storage format: base64(nonce + ciphertext + tag)
-
-Supports future migration to AWS KMS by swapping this module.
+Each encrypted value gets a unique random 96-bit nonce (IV).
+Storage format: ``enc::<base64(nonce + ciphertext + tag)>``
 """
 import os
 import base64
-import hashlib
+import logging
+from typing import Optional
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from app.core.config import settings
+from app.core.kms import get_master_key, KmsConfigurationError
+
+logger = logging.getLogger(__name__)
+
+_aesgcm: Optional[AESGCM] = None
 
 
-def _derive_key() -> bytes:
+def _get_cipher() -> Optional[AESGCM]:
     """
-    Derive a 256-bit AES key from the configured ENCRYPTION_KEY.
-    Uses SHA-256 hash for deterministic key derivation.
-    In production, this should be replaced with AWS KMS.
+    Lazy-initialize the AES-GCM cipher from the KMS-unwrapped master key.
+
+    Returns None if no key material is available (dev machines without
+    ENCRYPTION_KEY or KMS configured) — callers treat this as "encryption
+    disabled" and fall back to plaintext storage.
     """
-    raw_key = settings.ENCRYPTION_KEY
-    if not raw_key:
-        raise ValueError("ENCRYPTION_KEY is not configured. Set it in .env")
-    return hashlib.sha256(raw_key.encode("utf-8")).digest()
-
-
-_aesgcm = None
-
-
-def _get_cipher() -> AESGCM:
-    """Lazy-initialize the AES-GCM cipher."""
     global _aesgcm
-    if _aesgcm is None:
-        _aesgcm = AESGCM(_derive_key())
+    if _aesgcm is not None:
+        return _aesgcm
+
+    try:
+        key = get_master_key()
+    except KmsConfigurationError as exc:
+        # In production this should never happen — KMS misconfiguration is
+        # fatal at startup via main.py. In dev, log once and fall back.
+        logger.warning("Encryption disabled: %s", exc)
+        return None
+
+    _aesgcm = AESGCM(key)
     return _aesgcm
+
+
+def _is_encryption_enabled() -> bool:
+    return bool(settings.AWS_KMS_KEY_ID or settings.ENCRYPTION_KEY)
 
 
 def encrypt_content(plaintext: str) -> str:
     """
     Encrypt a plaintext string using AES-256-GCM.
 
-    Returns a base64-encoded string containing nonce + ciphertext + tag.
-    Returns the original string if ENCRYPTION_KEY is not set (graceful fallback).
+    Returns a string of the form ``enc::<base64>``. Returns the original
+    string unchanged if no key material is configured (graceful fallback
+    for dev machines without encryption set up).
     """
     if not plaintext:
         return plaintext
 
-    if not settings.ENCRYPTION_KEY:
+    if not _is_encryption_enabled():
+        return plaintext
+
+    cipher = _get_cipher()
+    if cipher is None:
         return plaintext
 
     try:
-        cipher = _get_cipher()
         nonce = os.urandom(12)  # 96-bit nonce for GCM
         ciphertext = cipher.encrypt(nonce, plaintext.encode("utf-8"), None)
-        # Store as: base64(nonce + ciphertext_with_tag)
         encrypted = base64.b64encode(nonce + ciphertext).decode("utf-8")
         return f"enc::{encrypted}"
     except Exception:
-        # If encryption fails, return plaintext to avoid data loss
+        # Never lose user data to an encryption bug — log and store plaintext.
+        logger.exception("encrypt_content failed; storing plaintext")
         return plaintext
 
 
 def decrypt_content(stored_value: str) -> str:
     """
-    Decrypt a stored value. If the value is not encrypted (no 'enc::' prefix),
-    returns it as-is for backward compatibility with existing unencrypted data.
+    Decrypt a stored value. Values without the ``enc::`` prefix are returned
+    as-is for backward compatibility with legacy unencrypted rows.
     """
     if not stored_value:
         return stored_value
 
-    # Not encrypted — return as-is (backward compat with existing data)
     if not stored_value.startswith("enc::"):
         return stored_value
 
-    if not settings.ENCRYPTION_KEY:
-        # Can't decrypt without key — return raw value
+    cipher = _get_cipher()
+    if cipher is None:
         return stored_value
 
     try:
-        cipher = _get_cipher()
-        raw = base64.b64decode(stored_value[5:])  # Strip "enc::" prefix
+        raw = base64.b64decode(stored_value[5:])
         nonce = raw[:12]
         ciphertext = raw[12:]
         plaintext = cipher.decrypt(nonce, ciphertext, None)
         return plaintext.decode("utf-8")
     except Exception:
-        # If decryption fails, return raw value
+        logger.exception("decrypt_content failed; returning raw value")
         return stored_value

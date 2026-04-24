@@ -35,11 +35,21 @@ class User(Base):
     )
     email_verified_at = Column(DateTime, nullable=True)
     # 2FA / MFA
-    totp_secret = Column(String(32), nullable=True)  # Base32 TOTP secret
+    totp_secret = Column(String(32), nullable=True)  # Base32 TOTP secret (totp method)
     is_2fa_enabled = Column(Boolean, default=False, nullable=False)
+    # Which 2FA method the user picked: 'totp' or 'email'. NULL when 2FA is disabled.
+    two_factor_method = Column(String(16), nullable=True)
+    # Transient storage for emailed one-time codes (email method).
+    # Code is stored hashed (SHA-256 hex) so the DB never holds plaintext OTPs.
+    email_2fa_code_hash = Column(String(64), nullable=True)
+    email_2fa_expires_at = Column(DateTime, nullable=True)
+    email_2fa_purpose = Column(String(16), nullable=True)  # 'setup' or 'login'
     # Settings & Preferences
     language = Column(String(10), default="en", nullable=False)  # ISO 639-1
     timezone = Column(String(50), default="Australia/Sydney", nullable=False)  # IANA timezone
+    # Tone mode for AI coaching replies ('motivational' | 'analytical' | 'empathetic').
+    # NULL means "fall through to the global default". See app/core/support_style.py.
+    support_style = Column(String(24), nullable=True)
     notify_email_enabled = Column(Boolean, default=True, nullable=False)
     notify_in_app_enabled = Column(Boolean, default=True, nullable=False)
     notify_capsule_unlock = Column(Boolean, default=True, nullable=False)
