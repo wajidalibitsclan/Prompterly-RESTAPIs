@@ -68,3 +68,79 @@ uploads/
 temp/
 
 prompterly
+
+
+# ---------------------------------------------------------------------
+# Internal docs / drafts
+# Catch every PDF / Word doc at any depth so we don't have to maintain
+# a per-file list as new spec docs land. Anything that genuinely needs
+# to be in git can be added as an exception with `!path/file.pdf`.
+# ---------------------------------------------------------------------
+*.pdf
+*.docx
+*.doc
+*.odt
+*.rtf
+*.pages
+
+# ---------------------------------------------------------------------
+# TLS / secrets — real keys must never be committed
+# ---------------------------------------------------------------------
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+nginx/ssl/*.csr
+nginx/letsencrypt/
+nginx/certbot/*
+!nginx/certbot/.gitkeep
+
+# AWS / Stripe / npm / yarn CLI caches that sometimes appear in repos
+.aws/
+.stripe/
+.npm/
+.yarn/
+
+# ---------------------------------------------------------------------
+# Local data dumps & DB volumes
+# (the SQL migration files under ./migrations and ./database stay
+# tracked — those are committed schema. This is just dumps / mounts.)
+# ---------------------------------------------------------------------
+mysql_data/
+postgres_data/
+redis_data/
+*.dump
+*.sql.gz
+*.sql.bak
+
+# ---------------------------------------------------------------------
+# Editor / OS / build artefacts not already covered above
+# ---------------------------------------------------------------------
+*.bak
+*.backup
+*~
+*.tmp
+*.orig
+.history/
+.idea/workspace.xml
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------
+# Frontend build / coverage that may slip through the broad `prompterly`
+# ignore above (e.g. when the frontend is checked out as its own repo)
+# ---------------------------------------------------------------------
+node_modules/
+coverage/
+.nyc_output/
+.next/
+.turbo/
+.parcel-cache/
+.vite/
+dist/
+
+# ---------------------------------------------------------------------
+# Local-only Claude / agent state
+# ---------------------------------------------------------------------
+.claude/
+.cursor/
+.codex/
