@@ -144,3 +144,5 @@ dist/
 .claude/
 .cursor/
 .codex/
+
+.venv
