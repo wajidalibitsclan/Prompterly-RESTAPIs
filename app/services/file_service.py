@@ -3,6 +3,7 @@ File service for managing file uploads and storage
 Supports AWS S3, DigitalOcean Spaces, and Local Storage
 """
 import os
+import re
 import shutil
 import boto3
 from botocore.exceptions import ClientError
@@ -12,6 +13,33 @@ import logging
 import mimetypes
 import uuid
 from pathlib import Path
+
+
+# UUID v4 pattern (8-4-4-4-12 lowercase hex). Used by `display_filename` to
+# strip the collision-safety prefix this service prepends on upload — the
+# stored path keeps the UUID for de-duplication but humans should see the
+# original filename in the UI.
+_UUID_PREFIX_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_",
+    re.IGNORECASE,
+)
+
+
+def display_filename(storage_path: Optional[str]) -> Optional[str]:
+    """
+    Return the human-friendly filename for a stored file.
+
+    Storage paths look like
+        uploads/2026/05/26/{uuid}_{original-name}.pdf
+    We pop the directory off and strip the `{uuid}_` collision prefix so
+    the UI shows `original-name.pdf`. If the leading segment doesn't look
+    like a UUID (older rows, manually uploaded files), the basename is
+    returned unchanged.
+    """
+    if not storage_path:
+        return None
+    basename = storage_path.rsplit("/", 1)[-1]
+    return _UUID_PREFIX_RE.sub("", basename) or basename
 
 from app.core.config import settings
 from app.core.timezone import now_naive
@@ -101,13 +129,15 @@ class FileService:
                 content_type = 'application/octet-stream'
 
             if self.storage_type == "s3":
-                # Upload to S3
+                # Upload to S3 with server-side AES-256 encryption
+                # (Security Standard §3 — Encryption At Rest for object storage).
                 await file.seek(0)
                 self.s3_client.put_object(
                     Bucket=self.bucket_name,
                     Key=storage_path,
                     Body=content,
                     ContentType=content_type,
+                    ServerSideEncryption="AES256",
                     Metadata={
                         'user_id': str(user_id),
                         'original_filename': file.filename
@@ -413,12 +443,14 @@ class FileService:
             storage_path = f"exports/{date_path}/{filename}"
 
             if self.storage_type == "s3":
-                # Upload to S3
+                # Export uploads also get SSE-AES256 — exports often contain
+                # decrypted user content (chat/notes) en route to the user.
                 self.s3_client.put_object(
                     Bucket=self.bucket_name,
                     Key=storage_path,
                     Body=content,
                     ContentType=content_type,
+                    ServerSideEncryption="AES256",
                     ContentDisposition=f'attachment; filename="{filename}"'
                 )
 

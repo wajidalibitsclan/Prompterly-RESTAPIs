@@ -55,6 +55,16 @@ class ChatThread(Base):
     # preference". Lets the user flip tone mid-conversation without touching
     # their account default.
     support_style = Column(String(24), nullable=True)
+    # Pin to the active support-style version at thread-creation time
+    # (Security Standard §15 / Task S20). Mid-conversation style switches
+    # re-pin this column so it always reflects the version active when the
+    # next AI reply is generated. Per-message version_id is recorded
+    # separately in `ChatMessage.message_metadata` for full history.
+    support_style_version_id = Column(
+        Integer,
+        ForeignKey("support_style_versions.id"),
+        nullable=True,
+    )
     created_at = Column(DateTime, default=now_naive, nullable=False)
 
     # Relationships

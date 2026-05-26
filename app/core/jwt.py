@@ -88,13 +88,13 @@ async def get_current_active_user(
 ) -> User:
     """
     Dependency to get the current active user
-    
+
     Args:
         current_user: Current authenticated user
-        
+
     Returns:
         Active User object
-        
+
     Raises:
         HTTPException: If user is inactive
     """
@@ -103,7 +103,42 @@ async def get_current_active_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified"
         )
-    
+
+    return current_user
+
+
+async def get_current_active_paying_user(
+    current_user: User = Depends(get_current_active_user)
+) -> User:
+    """
+    Same as `get_current_active_user`, but additionally rejects accounts
+    that have been paused due to failed payments.
+
+    Apply to endpoints that gate paid features (chat threads, lounge
+    membership-driven content). The user can still log in, manage their
+    profile, and — crucially — update their card via /billing endpoints,
+    but anything that requires an active paid subscription returns 402.
+
+    Raises:
+        HTTPException 402 Payment Required when `user.account_paused_at`
+        is set. The response body carries `error_code=PAYMENT_REQUIRED`
+        and an `action_url` so the FE can redirect to the payment-update
+        page (Security Standard / dunning runbook §11).
+    """
+    if current_user.account_paused_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error_code": "PAYMENT_REQUIRED",
+                "message": (
+                    "Your account access is paused due to failed payments. "
+                    "Please update your payment method to continue using "
+                    "your lounges."
+                ),
+                "action_url": "/settings/payment",
+                "paused_at": current_user.account_paused_at.isoformat(),
+            },
+        )
     return current_user
 
 

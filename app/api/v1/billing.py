@@ -13,7 +13,17 @@ from app.core.timezone import now_naive
 from app.core.jwt import get_current_active_user
 from app.core.config import settings
 from app.db.models.user import User
-from app.db.models.billing import SubscriptionPlan, Subscription, Payment, LoungeSubscription, SubscriptionStatus
+from app.db.models.billing import (
+    SubscriptionPlan,
+    Subscription,
+    Payment,
+    LoungeSubscription,
+    SubscriptionStatus,
+    ProcessedStripeEvent,
+)
+from sqlalchemy.exc import IntegrityError
+from app.services import audit_log_service as audit_log
+from app.services.audit_log_service import AuditAction
 from datetime import timedelta
 from app.services.email_service import (
     send_subscription_confirmation_email_sync,
@@ -42,6 +52,13 @@ from app.schemas.billing import (
 from app.services.billing_service import billing_service
 
 router = APIRouter()
+
+
+def _mentor_name_for(lounge) -> Optional[str]:
+    """Pull the mentor's display name off a Lounge row, or None if missing."""
+    if lounge and getattr(lounge, "mentor", None) and getattr(lounge.mentor, "user", None):
+        return lounge.mentor.user.name
+    return None
 logger = logging.getLogger(__name__)
 
 
@@ -497,6 +514,7 @@ async def get_lounge_subscription(
         canceled_at=subscription.canceled_at,
         lounge_title=lounge.title,
         lounge_slug=lounge.slug,
+        mentor_name=_mentor_name_for(lounge),
         is_active=subscription.is_active,
         days_until_renewal=days_until
     )
@@ -833,12 +851,51 @@ async def stripe_webhook(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid signature"
             )
-        
+
         # Handle event
+        event_id = event.get('id')
         event_type = event['type']
         event_data = event['data']['object']
 
-        logger.info(f"Received Stripe webhook: {event_type}")
+        # Replay protection (Security Standard §11). `construct_event` already
+        # enforces the 5-minute timestamp tolerance Stripe builds into the
+        # signature scheme, but Stripe will retry deliveries for ~3 days on
+        # any non-2xx and an attacker who captures a signed body can replay
+        # it within the tolerance window. We INSERT the event id and let the
+        # PK uniqueness constraint reject duplicates — that's the durable
+        # gate, the pre-check is just so we can return 200 without raising.
+        if not event_id:
+            # Defensive — Stripe always sends an id; if it ever doesn't we'd
+            # rather fail closed than silently lose idempotency.
+            logger.error("Stripe webhook missing event id")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing event id"
+            )
+
+        already_processed = db.query(ProcessedStripeEvent).filter(
+            ProcessedStripeEvent.event_id == event_id
+        ).first()
+        if already_processed:
+            logger.info(
+                f"Stripe event {event_id} ({event_type}) already processed at "
+                f"{already_processed.processed_at.isoformat()} — skipping"
+            )
+            return {"status": "ok", "duplicate": True}
+
+        try:
+            db.add(ProcessedStripeEvent(event_id=event_id, event_type=event_type))
+            db.commit()
+        except IntegrityError:
+            # Two concurrent deliveries raced past the pre-check above; the
+            # PK unique constraint serialised them — the loser bows out.
+            db.rollback()
+            logger.info(
+                f"Stripe event {event_id} ({event_type}) lost idempotency race — skipping"
+            )
+            return {"status": "ok", "duplicate": True}
+
+        logger.info(f"Received Stripe webhook: {event_type} (event_id={event_id})")
 
         if event_type == 'checkout.session.completed':
             # Check if this is a lounge subscription by looking at metadata
@@ -896,6 +953,21 @@ async def stripe_webhook(
                 logger.info(f"Processing REGULAR checkout for user {metadata.get('user_id')}")
                 await billing_service.handle_checkout_completed(event_data, db)
 
+            # Audit trail (Security Standard §8 — record subscription creation).
+            audit_log.record(
+                AuditAction.SUBSCRIPTION_CREATED, actor=None, request=request,
+                entity_type="StripeCheckoutSession",
+                audit_metadata={
+                    "stripe_session_id": event_data.get('id'),
+                    "stripe_subscription_id": event_data.get('subscription'),
+                    "stripe_event_id": event_id,
+                    "user_id": metadata.get('user_id'),
+                    "lounge_id": metadata.get('lounge_id'),
+                    "subscription_type": metadata.get('subscription_type'),
+                    "plan_type": metadata.get('plan_type'),
+                },
+            )
+
         elif event_type in ['customer.subscription.updated', 'customer.subscription.deleted']:
             # Determine if this is a lounge subscription by checking the database
             stripe_sub_id = event_data['id']
@@ -910,6 +982,22 @@ async def stripe_webhook(
                 await billing_service.handle_lounge_subscription_updated(event_data, db)
             else:
                 await billing_service.handle_subscription_updated(event_data, db)
+
+            # Audit trail (Security Standard §8 — record subscription changes).
+            # Actor is None because this is a Stripe-driven system event; the
+            # user is captured in metadata via stripe_subscription_id.
+            audit_log.record(
+                AuditAction.SUBSCRIPTION_CANCELED if event_type.endswith('deleted')
+                else AuditAction.SUBSCRIPTION_UPDATED,
+                actor=None, request=request,
+                entity_type="StripeSubscription", entity_id=None,
+                audit_metadata={
+                    "stripe_subscription_id": stripe_sub_id,
+                    "stripe_event_id": event_id,
+                    "event_type": event_type,
+                    "is_lounge": bool(lounge_sub),
+                },
+            )
 
         elif event_type in ['invoice.paid', 'invoice_payment.paid', 'invoice.payment_succeeded']:
             # Handle successful subscription payment (new subscription or renewal)
@@ -953,6 +1041,21 @@ async def stripe_webhook(
                         logger.info(f"Found lounge subscription {lounge_sub.id}, updating...")
                         await billing_service.handle_lounge_subscription_updated(stripe_sub, db)
                         logger.info(f"Lounge subscription {lounge_sub.id} updated successfully")
+
+                        # Clear the dunning state — a successful payment means
+                        # the user is no longer in default. The Day-7 lockout
+                        # is lifted, the failure counter is reset, and the
+                        # scheduled data-deletion date is cleared.
+                        recovering_user = db.query(User).filter(User.id == lounge_sub.user_id).first()
+                        if recovering_user and recovering_user.account_paused_at is not None:
+                            logger.info(
+                                f"Clearing payment-lock for user {recovering_user.id} "
+                                f"after successful payment on subscription {subscription_id}"
+                            )
+                            recovering_user.account_paused_at = None
+                            recovering_user.payment_failure_count = 0
+                            recovering_user.data_deletion_scheduled_at = None
+                            db.commit()
 
                         # Send subscription confirmation email for NEW subscriptions
                         # billing_reason = 'subscription_create' means this is the first invoice

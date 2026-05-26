@@ -136,6 +136,12 @@ class UserResponse(UserBase):
     privacy_accepted_at: Optional[datetime] = None
     tos_accepted_at: Optional[datetime] = None
     age_confirmed: bool = False
+    # Account lifecycle / dunning (set when 3+ payment retries have failed).
+    # The dashboard reads this flag to render the "Payment required" banner
+    # and disable lounge entry. Paid endpoints (chat, etc.) additionally
+    # reject with 402 — see `get_current_active_paying_user`.
+    account_paused_at: Optional[datetime] = None
+    is_payment_locked: bool = False
     created_at: datetime
 
     class Config:

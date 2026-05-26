@@ -441,39 +441,51 @@ async def delete_prompt(
         raise HTTPException(status_code=404, detail="Prompt not found")
 
 
-@router.post("/prompts/{prompt_id}/regenerate-embedding", response_model=KBPromptResponse)
+@router.post("/prompts/{prompt_id}/regenerate-embedding")
 async def regenerate_prompt_embedding(
     prompt_id: int,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
-    """Regenerate embedding for a prompt (admin only)"""
-    prompt = await knowledge_base_service.regenerate_prompt_embedding(db, prompt_id)
+    """
+    Kick off a background job to regenerate the embedding for a prompt.
+
+    Embedding generation hits OpenAI and can fail (rate limit, quota,
+    network), so we don't block the request — we return the job id and
+    the FE polls `/knowledge-base/jobs/{id}` for progress. This is the
+    same pattern used by the update endpoint, so the retry flow in the
+    admin UI is symmetric.
+    """
+    from app.services.background_task_service import background_task_service
+    from app.db.models.background_job import JobType
+    from app.db.session import SessionLocal
+    from app.db.models.knowledge_base import KBPrompt
+
+    prompt = db.query(KBPrompt).filter(KBPrompt.id == prompt_id).first()
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found")
 
-    lounge_image = await get_lounge_image(prompt, db)
-    return KBPromptResponse(
-        id=prompt.id,
-        title=prompt.title,
-        content=prompt.content,
-        description=prompt.description,
-        tags=prompt.tags,
-        is_active=prompt.is_active,
-        is_included_in_rag=prompt.is_included_in_rag,
-        usage_count=prompt.usage_count,
-        has_embedding=prompt.embedding is not None,
-        created_at=prompt.created_at,
-        updated_at=prompt.updated_at,
-        category_id=prompt.category_id,
-        category_name=prompt.category.name if prompt.category else None,
-        lounge_id=prompt.lounge_id,
-        lounge_name=prompt.lounge.title if prompt.lounge else None,
-        lounge_image=lounge_image,
-        mentor_name=get_mentor_name(prompt),
-        mentor_image=get_mentor_image(prompt),
-        created_by_name=prompt.created_by.name if prompt.created_by else None
+    # Clear the stale embedding so RAG lookups can't accidentally hit it
+    # mid-regeneration. The background job will repopulate it on success.
+    prompt.embedding = None
+    db.commit()
+
+    job = background_task_service.create_job(
+        db=db,
+        job_type=JobType.PROMPT_EMBEDDING,
+        entity_type="prompt",
+        entity_id=prompt.id,
+        created_by_id=admin_user.id,
+        total_steps=3,
     )
+    background_task_service.start_background_task(
+        db_session_factory=SessionLocal,
+        job_id=job.id,
+        job_type=JobType.PROMPT_EMBEDDING,
+        entity_id=prompt.id,
+    )
+
+    return {"job_id": job.id, "prompt_id": prompt.id}
 
 
 # ============== Documents ==============

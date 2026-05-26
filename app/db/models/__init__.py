@@ -25,6 +25,7 @@ from app.db.models.billing import (
     Subscription,
     LoungeSubscription,
     Payment,
+    ProcessedStripeEvent,
     BillingInterval,
     LoungePlanType,
     SubscriptionStatus,
@@ -37,6 +38,7 @@ from app.db.models.misc import (
     FAQ,
     ComplianceRequest,
     ContactMessage,
+    AuditLog,
     NotificationChannel,
     NotificationStatus,
     RequestType,
@@ -58,6 +60,10 @@ from app.db.models.background_job import (
 from app.db.models.newsletter import (
     NewsletterSubscriber,
     SubscriberStatus
+)
+from app.db.models.support_style import (
+    SupportStyleConfig,
+    SupportStyleVersion,
 )
 
 __all__ = [
@@ -102,6 +108,7 @@ __all__ = [
     "Subscription",
     "LoungeSubscription",
     "Payment",
+    "ProcessedStripeEvent",
     "BillingInterval",
     "LoungePlanType",
     "SubscriptionStatus",
@@ -114,6 +121,7 @@ __all__ = [
     "FAQ",
     "ComplianceRequest",
     "ContactMessage",
+    "AuditLog",
     "NotificationChannel",
     "NotificationStatus",
     "RequestType",
@@ -135,4 +143,8 @@ __all__ = [
     # Newsletter models
     "NewsletterSubscriber",
     "SubscriberStatus",
+
+    # Support Style versioning
+    "SupportStyleConfig",
+    "SupportStyleVersion",
 ]

@@ -2,8 +2,26 @@
 AI Service for LLM integration
 Supports OpenAI GPT-4 and Anthropic Claude
 Includes RAG (Retrieval Augmented Generation) support
+
+Data-handling posture (Security Standard §14 — AI Data Boundaries):
+User conversations are NOT permitted to train public AI models. By default
+the OpenAI and Anthropic APIs (non-fine-tuning endpoints) do not retain or
+train on submitted prompts, but the binding opt-out lives in each
+provider's organisation console — not in this SDK. This module:
+
+  - Refuses to boot in production unless `AI_DATA_OPT_OUT=True`.
+  - Logs the configured posture at startup so it appears in audit logs.
+  - Passes a *hashed* user identifier on every request (the raw `user_uuid`
+    is never shared with a third party) so abuse-monitoring on the provider
+    side can be tied to an account without leaking pseudonymous IDs.
+
+Operators must additionally confirm in the provider consoles:
+  - OpenAI: data sharing disabled + ZDR enabled if available
+  - Anthropic: Zero Data Retention enabled for the workspace
 """
 from typing import List, Dict, Optional, Tuple, AsyncGenerator
+import hashlib
+import hmac
 import logging
 import json
 from openai import AsyncOpenAI
@@ -15,19 +33,74 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _safe_user_id(user_uuid: Optional[str]) -> Optional[str]:
+    """
+    Hash a user_uuid into a stable, non-reversible identifier safe to send
+    to third-party AI providers for abuse monitoring.
+
+    Uses HMAC-SHA256 with the application secret as the key, so the hash
+    space changes if our secret rotates — a provider can correlate within
+    a deployment but not across deployments / leaks.
+    """
+    if not user_uuid:
+        return None
+    secret = (settings.JWT_SECRET_KEY or "ai-pii-pepper").encode("utf-8")
+    digest = hmac.new(secret, user_uuid.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"prompterly:{digest[:32]}"
+
+
 class AIService:
     """AI Service for chat completions and embeddings. Claude is the default provider."""
 
     def __init__(self):
         """Initialize AI clients — Claude primary, OpenAI for embeddings"""
+        self._assert_data_posture()
+
         # Claude (primary for chat)
         if settings.ANTHROPIC_API_KEY and settings.ANTHROPIC_API_KEY != "sk-ant-your-anthropic-key":
             self.anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         else:
             self.anthropic_client = None
 
-        # OpenAI (for embeddings + fallback)
-        self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        # OpenAI (for embeddings + fallback). Passing `organization` binds
+        # every request to a specific OpenAI org so the dashboard-level
+        # data-sharing opt-out applies even if the API key was provisioned
+        # with multi-org access.
+        self.openai_client = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            organization=settings.OPENAI_ORG_ID,
+        )
+
+    @staticmethod
+    def _assert_data_posture() -> None:
+        """Refuse to start in production without the no-training posture set."""
+        if settings.AI_DATA_OPT_OUT:
+            logger.info(
+                "AI data posture: OPT-OUT of training. Operator must also "
+                "confirm provider consoles (OpenAI data sharing off, "
+                "Anthropic ZDR on). OpenAI org=%s",
+                settings.OPENAI_ORG_ID or "<unset>",
+            )
+            if settings.APP_ENV == "production" and not settings.OPENAI_ORG_ID:
+                # In production we want the org binding because the OpenAI
+                # opt-out is per-org. Warn loudly so it surfaces in audit
+                # review without blocking the boot.
+                logger.warning(
+                    "AI data posture: production deployment has no "
+                    "OPENAI_ORG_ID set. The opt-out cannot be guaranteed "
+                    "to bind to the right org — set OPENAI_ORG_ID."
+                )
+        else:
+            if settings.APP_ENV == "production":
+                raise RuntimeError(
+                    "Refusing to boot: AI_DATA_OPT_OUT must be True in "
+                    "production (Security Standard §14). Set AI_DATA_OPT_OUT=True "
+                    "in the environment and confirm provider-console opt-out."
+                )
+            logger.warning(
+                "AI data posture: OPT-OUT disabled. User content may be "
+                "retained by AI providers. Acceptable only in non-prod."
+            )
     
     async def generate_chat_response(
         self,
@@ -35,7 +108,8 @@ class AIService:
         context: Optional[str] = None,
         use_anthropic: bool = True,
         temperature: float = 0.7,
-        max_tokens: int = 1000
+        max_tokens: int = 1000,
+        user_uuid: Optional[str] = None,
     ) -> Tuple[str, Dict]:
         """
         Generate AI chat response. Defaults to Claude.
@@ -46,6 +120,8 @@ class AIService:
             use_anthropic: Use Anthropic Claude (default True). Set False for OpenAI.
             temperature: Sampling temperature (0-2)
             max_tokens: Maximum tokens to generate
+            user_uuid: Optional caller user_uuid. Hashed before being sent
+                       to the provider — see `_safe_user_id`.
 
         Returns:
             Tuple of (response_text, metadata)
@@ -62,33 +138,42 @@ class AIService:
             # Default to Claude, fall back to OpenAI
             if use_anthropic and self.anthropic_client:
                 return await self._generate_anthropic_response(
-                    messages, temperature, max_tokens
+                    messages, temperature, max_tokens, user_uuid=user_uuid,
                 )
             else:
                 return await self._generate_openai_response(
-                    messages, temperature, max_tokens
+                    messages, temperature, max_tokens, user_uuid=user_uuid,
                 )
 
         except Exception as e:
             logger.error(f"Error generating chat response: {str(e)}")
             raise
-    
+
     async def _generate_openai_response(
         self,
         messages: List[Dict[str, str]],
         temperature: float,
-        max_tokens: int
+        max_tokens: int,
+        user_uuid: Optional[str] = None,
     ) -> Tuple[str, Dict]:
         """Generate response using OpenAI GPT-4"""
-        response = await self.openai_client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-        
+        kwargs: Dict = {
+            "model": settings.OPENAI_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        safe_uid = _safe_user_id(user_uuid)
+        if safe_uid:
+            # OpenAI `user` field — documented as used only for abuse
+            # detection, not training (and training is opted out at the
+            # org level — see module docstring).
+            kwargs["user"] = safe_uid
+
+        response = await self.openai_client.chat.completions.create(**kwargs)
+
         content = response.choices[0].message.content
-        
+
         metadata = {
             "model": settings.OPENAI_MODEL,
             "usage": {
@@ -98,36 +183,44 @@ class AIService:
             },
             "finish_reason": response.choices[0].finish_reason
         }
-        
+
         return content, metadata
-    
+
     async def _generate_anthropic_response(
         self,
         messages: List[Dict[str, str]],
         temperature: float,
-        max_tokens: int
+        max_tokens: int,
+        user_uuid: Optional[str] = None,
     ) -> Tuple[str, Dict]:
         """Generate response using Anthropic Claude"""
         # Extract system message if present
         system_message = None
         filtered_messages = []
-        
+
         for msg in messages:
             if msg["role"] == "system":
                 system_message = msg["content"]
             else:
                 filtered_messages.append(msg)
-        
-        response = await self.anthropic_client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            system=system_message,
-            messages=filtered_messages
-        )
-        
+
+        kwargs: Dict = {
+            "model": settings.ANTHROPIC_MODEL,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": system_message,
+            "messages": filtered_messages,
+        }
+        safe_uid = _safe_user_id(user_uuid)
+        if safe_uid:
+            # Anthropic accepts a `metadata.user_id` for abuse monitoring;
+            # like OpenAI's `user`, training is opted out at the org level.
+            kwargs["metadata"] = {"user_id": safe_uid}
+
+        response = await self.anthropic_client.messages.create(**kwargs)
+
         content = response.content[0].text
-        
+
         metadata = {
             "model": settings.ANTHROPIC_MODEL,
             "usage": {
@@ -136,7 +229,7 @@ class AIService:
             },
             "stop_reason": response.stop_reason
         }
-        
+
         return content, metadata
 
     async def generate_chat_response_stream(
@@ -144,7 +237,8 @@ class AIService:
         messages: List[Dict[str, str]],
         context: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1000
+        max_tokens: int = 1000,
+        user_uuid: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Generate AI chat response with streaming. Uses Claude by default.
@@ -154,6 +248,7 @@ class AIService:
             context: Optional RAG context to inject
             temperature: Sampling temperature (0-2)
             max_tokens: Maximum tokens to generate
+            user_uuid: Optional caller user_uuid; hashed before send.
 
         Yields:
             Chunks of response text as they arrive
@@ -167,6 +262,8 @@ class AIService:
                 }
                 messages = [context_message] + messages
 
+            safe_uid = _safe_user_id(user_uuid)
+
             # Use Claude for streaming if available
             if self.anthropic_client:
                 # Separate system message for Claude
@@ -178,24 +275,31 @@ class AIService:
                     else:
                         filtered_messages.append(msg)
 
-                async with self.anthropic_client.messages.stream(
-                    model=settings.ANTHROPIC_MODEL,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system_message or "",
-                    messages=filtered_messages
-                ) as stream:
+                stream_kwargs: Dict = {
+                    "model": settings.ANTHROPIC_MODEL,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "system": system_message or "",
+                    "messages": filtered_messages,
+                }
+                if safe_uid:
+                    stream_kwargs["metadata"] = {"user_id": safe_uid}
+
+                async with self.anthropic_client.messages.stream(**stream_kwargs) as stream:
                     async for text in stream.text_stream:
                         yield text
             else:
                 # Fallback to OpenAI
-                response = await self.openai_client.chat.completions.create(
-                    model=settings.OPENAI_MODEL,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=True
-                )
+                openai_kwargs: Dict = {
+                    "model": settings.OPENAI_MODEL,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                }
+                if safe_uid:
+                    openai_kwargs["user"] = safe_uid
+                response = await self.openai_client.chat.completions.create(**openai_kwargs)
 
                 async for chunk in response:
                     if chunk.choices[0].delta.content:

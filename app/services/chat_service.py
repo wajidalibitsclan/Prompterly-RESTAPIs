@@ -15,7 +15,10 @@ from app.db.models.mentor import Mentor
 from app.db.models.user import User
 from app.services.ai_service import ai_service
 from app.core.encryption import encrypt_content, decrypt_content
-from app.core.support_style import resolve_style
+from app.core.support_style import (
+    resolve_style,
+    active_version_id_for as _active_support_style_version_id,
+)
 from app.services.knowledge_base_service import knowledge_base_service
 
 logger = logging.getLogger(__name__)
@@ -77,12 +80,37 @@ class ChatService:
             User.id == user_id
         ).scalar()
 
+        # Mentor IP versioning (Security Standard §15): pin the thread to
+        # the currently active lounge config version. Subsequent edits to
+        # the lounge will create new versions, but THIS thread will keep
+        # pointing at the version that was current when it was opened.
+        config_version_id = None
+        if lounge_id:
+            from app.services import lounge_versioning_service
+            active_version = lounge_versioning_service.get_active_version(lounge_id, db)
+            if active_version:
+                config_version_id = active_version.id
+            else:
+                logger.info(
+                    "Thread create: lounge %s has no active config version "
+                    "(pre-versioning lounge?) — leaving thread unversioned",
+                    lounge_id,
+                )
+
+        # Pin the thread to whichever support-style version is currently
+        # active (Task S20). `inherited_style` may be NULL (= use the
+        # global default), in which case we resolve to the default
+        # style's version row.
+        support_style_version_id = _active_support_style_version_id(inherited_style)
+
         thread = ChatThread(
             user_id=user_id,
             lounge_id=lounge_id,
             title=title,
             status=ThreadStatus.OPEN,
             support_style=inherited_style,
+            support_style_version_id=support_style_version_id,
+            config_version_id=config_version_id,
         )
 
         db.add(thread)
@@ -180,10 +208,12 @@ class ChatService:
                 )
 
                 # Generate AI response
+                user_uuid = db.query(User.user_uuid).filter(User.id == user_id).scalar()
                 ai_response, metadata = await self.ai_service.generate_chat_response(
                     messages=history,
                     context=system_prompt,
-                    use_anthropic=use_anthropic
+                    use_anthropic=use_anthropic,
+                    user_uuid=user_uuid,
                 )
 
                 # Add RAG sources to metadata
@@ -306,9 +336,11 @@ class ChatService:
 
             # Stream AI response
             full_response = ""
+            user_uuid = db.query(User.user_uuid).filter(User.id == user_id).scalar()
             async for chunk in self.ai_service.generate_chat_response_stream(
                 messages=history,
-                context=system_prompt
+                context=system_prompt,
+                user_uuid=user_uuid,
             ):
                 full_response += chunk
                 yield {
@@ -1076,9 +1108,11 @@ Communication Style:
 
             # Stream AI response
             full_response = ""
+            user_uuid = db.query(User.user_uuid).filter(User.id == thread.user_id).scalar()
             async for chunk in self.ai_service.generate_chat_response_stream(
                 messages=history,
-                context=system_prompt
+                context=system_prompt,
+                user_uuid=user_uuid,
             ):
                 full_response += chunk
                 yield {
@@ -1174,10 +1208,12 @@ Rules:
 
 Return ONLY the title, nothing else."""
 
+            title_user_uuid = db.query(User.user_uuid).filter(User.id == thread.user_id).scalar()
             title_response, _ = await self.ai_service.generate_chat_response(
                 messages=[{"role": "user", "content": title_prompt}],
                 context="You are a helpful assistant that generates short, descriptive titles.",
-                use_anthropic=True
+                use_anthropic=True,
+                user_uuid=title_user_uuid,
             )
 
             # Clean up the generated title
@@ -1236,10 +1272,12 @@ Return ONLY the title, nothing else."""
             )
 
             # Generate AI response
+            regen_user_uuid = db.query(User.user_uuid).filter(User.id == thread.user_id).scalar()
             ai_response, metadata = await self.ai_service.generate_chat_response(
                 messages=history,
                 context=system_prompt,
-                use_anthropic=True
+                use_anthropic=True,
+                user_uuid=regen_user_uuid,
             )
 
             # Add RAG sources to metadata

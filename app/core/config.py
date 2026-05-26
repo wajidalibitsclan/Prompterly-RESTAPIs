@@ -94,10 +94,26 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     OPENAI_MODEL: str = "gpt-4-turbo-preview"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    
+    # Optional explicit org id — required for opt-out to bind to the right
+    # OpenAI organisation when one API key has access to several orgs.
+    OPENAI_ORG_ID: Optional[str] = None
+
     # Anthropic (Primary AI Provider)
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+
+    # AI data-handling posture (Security Standard §14 — AI Data Boundaries).
+    # When True, the AIService asserts a no-training-data posture at startup
+    # and refuses to boot in production without the corresponding org-level
+    # opt-out being declared. **The actual opt-out lives in each provider's
+    # console**, not in the SDK:
+    #   - OpenAI: https://platform.openai.com/account/data-controls
+    #     (Sharing → Off. Confirm with `OPENAI_ORG_ID` set above.)
+    #   - Anthropic: enable Zero Data Retention on the Anthropic console for
+    #     this API key's workspace.
+    # Set to False ONLY in a non-prod environment where you've intentionally
+    # opted in to training (e.g. shared eval data).
+    AI_DATA_OPT_OUT: bool = True
     
     # Email - Postmark
     POSTMARK_SERVER_TOKEN: str = ""  # Postmark Server API Token (for REST API)

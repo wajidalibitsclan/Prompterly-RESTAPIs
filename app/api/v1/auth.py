@@ -45,6 +45,8 @@ from app.core.exceptions import (
     AccountInactiveError
 )
 from app.core.logging import get_logger, log_auth_event
+from app.services import audit_log_service as audit_log
+from app.services.audit_log_service import AuditAction
 from app.core.jwt import get_current_user
 from app.db.models.user import User, UserRole
 from app.db.models.auth import UserSession, OAuthAccount, OAuthProvider, EmailOTP, EmailChangeRequest as EmailChangeRequestModel
@@ -285,7 +287,11 @@ async def verify_registration_otp(
         db.commit()
         db.refresh(new_user)
 
-        log_auth_event(logger, "REGISTER", new_user.email, True, client_ip)
+        log_auth_event(logger, "REGISTER", new_user.email, True, client_ip, user_uuid=new_user.user_uuid)
+        audit_log.record(
+            AuditAction.ACCOUNT_REGISTER, actor=new_user, request=request,
+            audit_metadata={"flow": "otp"},
+        )
         logger.info(f"User registered successfully via OTP: {new_user.email} (ID: {new_user.id})")
 
         # Send welcome email in background
@@ -348,7 +354,11 @@ async def register(
         # TODO: Send verification email in background
         # background_tasks.add_task(send_email, ...)
 
-        log_auth_event(logger, "REGISTER", new_user.email, True, client_ip)
+        log_auth_event(logger, "REGISTER", new_user.email, True, client_ip, user_uuid=new_user.user_uuid)
+        audit_log.record(
+            AuditAction.ACCOUNT_REGISTER, actor=new_user, request=request,
+            audit_metadata={"flow": "legacy"},
+        )
         logger.info(f"User registered successfully: {new_user.email} (ID: {new_user.id})")
 
         return new_user
@@ -392,12 +402,16 @@ async def login(
         raise InvalidCredentialsError()
 
     if not verify_password(form_data.password, user.password_hash):
-        log_auth_event(logger, "LOGIN", form_data.username, False, client_ip, "Invalid password")
+        log_auth_event(logger, "LOGIN", form_data.username, False, client_ip, "Invalid password", user_uuid=user.user_uuid)
+        audit_log.record(
+            AuditAction.LOGIN_FAILED, actor=user, request=request,
+            audit_metadata={"reason": "invalid_password"},
+        )
         raise InvalidCredentialsError()
 
     # Check if user account is active
     if hasattr(user, 'is_active') and not user.is_active:
-        log_auth_event(logger, "LOGIN", form_data.username, False, client_ip, "Account inactive")
+        log_auth_event(logger, "LOGIN", form_data.username, False, client_ip, "Account inactive", user_uuid=user.user_uuid)
         raise AccountInactiveError()
 
     # If 2FA is enabled, return a temporary token and require a second-factor
@@ -418,7 +432,7 @@ async def login(
                 send_otp_email_sync, user.email, user.name, code
             )
 
-        log_auth_event(logger, "LOGIN_2FA_PENDING", user.email, True, client_ip)
+        log_auth_event(logger, "LOGIN_2FA_PENDING", user.email, True, client_ip, user_uuid=user.user_uuid)
         logger.info(f"2FA required for user: {user.email} method={method}")
         return {
             "access_token": "",
@@ -462,7 +476,8 @@ async def login(
         )
         logger.info(f"New device detected for {user.email} - suspicious login alert sent")
 
-    log_auth_event(logger, "LOGIN", user.email, True, client_ip)
+    log_auth_event(logger, "LOGIN", user.email, True, client_ip, user_uuid=user.user_uuid)
+    audit_log.record(AuditAction.LOGIN_SUCCESS, actor=user, request=request)
     logger.info(f"User logged in successfully: {user.email} (ID: {user.id})")
 
     return {
@@ -562,7 +577,7 @@ async def verify_email(
     user.email_verified_at = now_naive()
     db.commit()
 
-    log_auth_event(logger, "EMAIL_VERIFY", user.email, True, client_ip)
+    log_auth_event(logger, "EMAIL_VERIFY", user.email, True, client_ip, user_uuid=user.user_uuid)
     logger.info(f"Email verified successfully: {user.email}")
 
     return {"message": "Email verified successfully"}
@@ -621,7 +636,7 @@ async def send_password_reset_otp(
         # Send OTP email in background
         background_tasks.add_task(send_password_reset_otp_sync, user.email, user.name, otp)
 
-        log_auth_event(logger, "PASSWORD_RESET_OTP", user.email, True, client_ip)
+        log_auth_event(logger, "PASSWORD_RESET_OTP", user.email, True, client_ip, user_uuid=user.user_uuid)
         logger.info(f"Password reset OTP queued for sending to: {user.email}")
 
         return {"message": response_message, "email": reset_request.email}
@@ -690,7 +705,11 @@ async def verify_password_reset_otp(
 
         db.commit()
 
-        log_auth_event(logger, "PASSWORD_RESET", user.email, True, client_ip)
+        log_auth_event(logger, "PASSWORD_RESET", user.email, True, client_ip, user_uuid=user.user_uuid)
+        audit_log.record(
+            AuditAction.ACCOUNT_PASSWORD_RESET, actor=user, request=request,
+            audit_metadata={"revoked_sessions": revoked_count},
+        )
         logger.info(f"Password reset successfully for: {user.email} (revoked {revoked_count} sessions)")
 
         return {"message": "Password reset successfully. You can now log in with your new password."}
@@ -760,7 +779,7 @@ async def reset_password(
 
     db.commit()
 
-    log_auth_event(logger, "PASSWORD_RESET", user.email, True, client_ip)
+    log_auth_event(logger, "PASSWORD_RESET", user.email, True, client_ip, user_uuid=user.user_uuid)
     logger.info(f"Password reset successfully for: {user.email} (revoked {revoked_count} sessions)")
 
     return {"message": "Password reset successfully. You can now log in with your new password."}
@@ -944,7 +963,7 @@ async def google_callback(
         )
         logger.info(f"New device detected for Google login {user.email} - alert sent")
 
-    log_auth_event(logger, "GOOGLE_LOGIN", user.email, True, client_ip)
+    log_auth_event(logger, "GOOGLE_LOGIN", user.email, True, client_ip, user_uuid=user.user_uuid)
     logger.info(f"Google OAuth login successful: {user.email} (ID: {user.id})")
 
     # Redirect to frontend with tokens in URL params
@@ -982,7 +1001,8 @@ async def logout(
 
     db.commit()
 
-    log_auth_event(logger, "LOGOUT", current_user.email, True, client_ip)
+    log_auth_event(logger, "LOGOUT", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
+    audit_log.record(AuditAction.LOGOUT, actor=current_user, request=request)
     logger.info(f"User logged out: {current_user.email} (revoked {revoked_count} sessions)")
 
     return {"message": "Logged out successfully"}
@@ -1013,7 +1033,7 @@ async def send_email_change_otp(
 
     # Verify current password
     if not verify_password(data.password, current_user.password_hash):
-        log_auth_event(logger, "EMAIL_CHANGE_OTP", current_user.email, False, client_ip, "Invalid password")
+        log_auth_event(logger, "EMAIL_CHANGE_OTP", current_user.email, False, client_ip, "Invalid password", user_uuid=current_user.user_uuid)
         raise InvalidCredentialsError(message="Incorrect password")
 
     # Check new email is different
@@ -1023,7 +1043,7 @@ async def send_email_change_otp(
     # Check new email is not already taken
     existing = db.query(User).filter(User.email == data.new_email).first()
     if existing:
-        log_auth_event(logger, "EMAIL_CHANGE_OTP", current_user.email, False, client_ip, "New email already exists")
+        log_auth_event(logger, "EMAIL_CHANGE_OTP", current_user.email, False, client_ip, "New email already exists", user_uuid=current_user.user_uuid)
         raise EmailAlreadyExistsError()
 
     try:
@@ -1050,7 +1070,7 @@ async def send_email_change_otp(
         # Send OTP to the new email
         background_tasks.add_task(send_otp_email_sync, data.new_email, current_user.name, otp)
 
-        log_auth_event(logger, "EMAIL_CHANGE_OTP", current_user.email, True, client_ip)
+        log_auth_event(logger, "EMAIL_CHANGE_OTP", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
         return {"message": "Verification code sent to your new email address", "new_email": data.new_email}
 
     except (EmailAlreadyExistsError, InvalidCredentialsError):
@@ -1093,7 +1113,7 @@ async def verify_email_change_otp(
     ).first()
 
     if not email_otp:
-        log_auth_event(logger, "EMAIL_CHANGE_VERIFY", old_email, False, client_ip, "Invalid or expired OTP")
+        log_auth_event(logger, "EMAIL_CHANGE_VERIFY", old_email, False, client_ip, "Invalid or expired OTP", user_uuid=current_user.user_uuid)
         raise InvalidTokenError(message="Invalid or expired verification code", token_type="otp")
 
     # Double-check new email is still available (race condition)
@@ -1148,7 +1168,12 @@ async def verify_email_change_otp(
         )
 
         log_auth_event(logger, "EMAIL_CHANGE", old_email, True, client_ip,
-                       f"Changed to {data.new_email}")
+                       f"Changed to {data.new_email}", user_uuid=current_user.user_uuid)
+        audit_log.record(
+            AuditAction.ACCOUNT_EMAIL_CHANGE, actor=current_user, request=request,
+            entity_type="User", entity_id=current_user.id,
+            changes={"email": {"old": "<old>", "new": "<new>"}},
+        )
         logger.info(f"Email changed: {old_email} -> {data.new_email} (user {current_user.id})")
 
         return {
@@ -1240,7 +1265,7 @@ async def revert_email_change(
         db.commit()
 
         log_auth_event(logger, "EMAIL_CHANGE_REVERT", old_email, True, client_ip,
-                       f"Reverted from {new_email}")
+                       f"Reverted from {new_email}", user_uuid=user.user_uuid)
         logger.info(f"Email change reverted: {new_email} -> {old_email} (user {user_id})")
 
         return {
@@ -1315,7 +1340,7 @@ async def setup_2fa(
         img.save(buffer, format="PNG")
         qr_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        log_auth_event(logger, "2FA_SETUP_TOTP", current_user.email, True, client_ip)
+        log_auth_event(logger, "2FA_SETUP_TOTP", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
 
         return {
             "method": "totp",
@@ -1341,7 +1366,7 @@ async def setup_2fa(
     else:  # pragma: no cover — background_tasks is always injected by FastAPI
         send_otp_email_sync(current_user.email, current_user.name, code)
 
-    log_auth_event(logger, "2FA_SETUP_EMAIL", current_user.email, True, client_ip)
+    log_auth_event(logger, "2FA_SETUP_EMAIL", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
 
     return {
         "method": "email",
@@ -1389,6 +1414,7 @@ async def enable_2fa(
             log_auth_event(
                 logger, "2FA_ENABLE_EMAIL", current_user.email, False,
                 client_ip, "Invalid email OTP",
+                user_uuid=current_user.user_uuid,
             )
             raise InvalidTokenError(
                 message="Invalid or expired verification code. Please try again.",
@@ -1399,7 +1425,11 @@ async def enable_2fa(
         current_user.two_factor_method = "email"
         current_user.totp_secret = None  # defensive — shouldn't be set
         clear_email_code(current_user, db)
-        log_auth_event(logger, "2FA_ENABLE_EMAIL", current_user.email, True, client_ip)
+        log_auth_event(logger, "2FA_ENABLE_EMAIL", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
+        audit_log.record(
+            AuditAction.TWO_FA_ENABLED, actor=current_user, request=request,
+            audit_metadata={"method": "email"},
+        )
         logger.info(f"Email 2FA enabled for user: {current_user.email}")
         return {"message": "Two-factor authentication (email) has been enabled"}
 
@@ -1409,6 +1439,7 @@ async def enable_2fa(
             log_auth_event(
                 logger, "2FA_ENABLE_TOTP", current_user.email, False,
                 client_ip, "Invalid TOTP code",
+                user_uuid=current_user.user_uuid,
             )
             raise InvalidTokenError(
                 message="Invalid verification code. Please try again.",
@@ -1417,7 +1448,11 @@ async def enable_2fa(
         current_user.is_2fa_enabled = True
         current_user.two_factor_method = "totp"
         db.commit()
-        log_auth_event(logger, "2FA_ENABLE_TOTP", current_user.email, True, client_ip)
+        log_auth_event(logger, "2FA_ENABLE_TOTP", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
+        audit_log.record(
+            AuditAction.TWO_FA_ENABLED, actor=current_user, request=request,
+            audit_metadata={"method": "totp"},
+        )
         logger.info(f"TOTP 2FA enabled for user: {current_user.email}")
         return {"message": "Two-factor authentication (authenticator app) has been enabled"}
 
@@ -1453,7 +1488,7 @@ async def disable_2fa(
         return {"message": "Two-factor authentication is not enabled"}
 
     if not verify_password(data.password, current_user.password_hash):
-        log_auth_event(logger, "2FA_DISABLE", current_user.email, False, client_ip, "Invalid password")
+        log_auth_event(logger, "2FA_DISABLE", current_user.email, False, client_ip, "Invalid password", user_uuid=current_user.user_uuid)
         raise InvalidCredentialsError(message="Incorrect password")
 
     method = current_user.two_factor_method or "totp"
@@ -1463,6 +1498,7 @@ async def disable_2fa(
             log_auth_event(
                 logger, "2FA_DISABLE", current_user.email, False,
                 client_ip, "Invalid or expired email OTP",
+                user_uuid=current_user.user_uuid,
             )
             raise InvalidTokenError(
                 message="Invalid or expired verification code. Request a new one first.",
@@ -1479,6 +1515,7 @@ async def disable_2fa(
             log_auth_event(
                 logger, "2FA_DISABLE", current_user.email, False,
                 client_ip, "Invalid TOTP code",
+                user_uuid=current_user.user_uuid,
             )
             raise InvalidTokenError(message="Invalid verification code", token_type="totp")
 
@@ -1492,7 +1529,8 @@ async def disable_2fa(
     # signature for future "we disabled your 2FA" notification emails.
     _ = background_tasks
 
-    log_auth_event(logger, "2FA_DISABLE", current_user.email, True, client_ip)
+    log_auth_event(logger, "2FA_DISABLE", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
+    audit_log.record(AuditAction.TWO_FA_DISABLED, actor=current_user, request=request)
     logger.info(f"2FA disabled for user: {current_user.email}")
 
     return {"message": "Two-factor authentication has been disabled"}
@@ -1519,7 +1557,7 @@ async def send_2fa_disable_email_code(
     background_tasks.add_task(
         send_otp_email_sync, current_user.email, current_user.name, code
     )
-    log_auth_event(logger, "2FA_DISABLE_CODE_SENT", current_user.email, True, client_ip)
+    log_auth_event(logger, "2FA_DISABLE_CODE_SENT", current_user.email, True, client_ip, user_uuid=current_user.user_uuid)
     return {"message": f"A disable code has been sent to {mask_email(current_user.email)}."}
 
 
@@ -1571,6 +1609,7 @@ async def verify_2fa(
             log_auth_event(
                 logger, "2FA_VERIFY_EMAIL", user.email, False,
                 client_ip, "Invalid or expired email OTP",
+                user_uuid=user.user_uuid,
             )
             raise InvalidTokenError(
                 message="Invalid or expired verification code",
@@ -1588,6 +1627,7 @@ async def verify_2fa(
             log_auth_event(
                 logger, "2FA_VERIFY_TOTP", user.email, False,
                 client_ip, "Invalid TOTP code",
+                user_uuid=user.user_uuid,
             )
             raise InvalidTokenError(
                 message="Invalid verification code",
@@ -1627,7 +1667,7 @@ async def verify_2fa(
             reset_url
         )
 
-    log_auth_event(logger, "LOGIN_2FA", user.email, True, client_ip)
+    log_auth_event(logger, "LOGIN_2FA", user.email, True, client_ip, user_uuid=user.user_uuid)
     logger.info(f"2FA login successful for: {user.email}")
 
     return {
@@ -1697,5 +1737,5 @@ async def resend_2fa_email_code(
     code = issue_email_code(user, db, PURPOSE_LOGIN)
     background_tasks.add_task(send_otp_email_sync, user.email, user.name, code)
 
-    log_auth_event(logger, "2FA_EMAIL_RESEND", user.email, True, client_ip)
+    log_auth_event(logger, "2FA_EMAIL_RESEND", user.email, True, client_ip, user_uuid=user.user_uuid)
     return {"message": "A new verification code has been sent to your email."}

@@ -2,15 +2,16 @@
 Chat API endpoints
 Handles chat threads, messages, and AI responses
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Request
 from fastapi.responses import StreamingResponse
+from app.core.rate_limit import limiter, AUTH
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 import json
 
 from app.db.session import get_db
-from app.core.jwt import get_current_active_user
+from app.core.jwt import get_current_active_paying_user
 from app.core.encryption import decrypt_content
 from app.db.models.user import User
 from app.db.models.chat import ChatThread, ChatMessage
@@ -32,7 +33,10 @@ from app.schemas.chat import (
     SupportStyleUpdate,
 )
 from app.core.search import matches_query, build_snippet
-from app.core.support_style import is_valid as is_valid_style
+from app.core.support_style import (
+    is_valid as is_valid_style,
+    active_version_id_for as _active_support_style_version_id,
+)
 from app.services.chat_service import chat_service
 from app.services.file_service import file_service
 
@@ -42,7 +46,7 @@ router = APIRouter()
 @router.get("/threads", response_model=List[ChatThreadResponse])
 async def list_threads(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_paying_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     lounge_id: Optional[int] = None,
@@ -99,7 +103,7 @@ async def list_threads(
 async def create_thread(
     thread_data: ChatThreadCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Create new chat thread
@@ -140,7 +144,7 @@ async def create_thread(
 async def get_thread(
     thread_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_paying_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100)
 ):
@@ -247,7 +251,7 @@ async def update_thread(
     thread_id: int,
     update_data: ChatThreadUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Update thread details
@@ -296,7 +300,7 @@ async def search_thread(
     thread_id: int,
     search_request: ThreadSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_paying_user),
 ):
     """
     Search within a single chat thread (Security Standard §3 / Task 15).
@@ -358,11 +362,13 @@ async def search_thread(
 
 
 @router.patch("/threads/{thread_id}/support-style")
+@limiter.limit(AUTH)
 async def update_thread_support_style(
     thread_id: int,
     data: SupportStyleUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_paying_user),
 ):
     """
     Set the tone mode for this thread (mid-conversation switch).
@@ -389,12 +395,17 @@ async def update_thread_support_style(
         )
 
     thread.support_style = data.support_style
+    # Re-pin the version row so this thread's `support_style_version_id`
+    # always reflects the version that will be applied to the NEXT AI
+    # reply. Mid-conversation switches are explicitly allowed by S14.
+    thread.support_style_version_id = _active_support_style_version_id(data.support_style)
     db.commit()
     db.refresh(thread)
 
     return {
         "thread_id": thread.id,
         "support_style": thread.support_style,
+        "support_style_version_id": thread.support_style_version_id,
     }
 
 
@@ -402,7 +413,7 @@ async def update_thread_support_style(
 async def delete_thread(
     thread_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Delete thread
@@ -430,7 +441,7 @@ async def send_message(
     thread_id: int,
     message_data: MessageCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_paying_user),
     generate_ai: bool = Query(True, description="Generate AI response")
 ):
     """
@@ -540,7 +551,7 @@ async def send_message_stream(
     thread_id: int,
     message_data: MessageCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Send message and stream AI response via Server-Sent Events
@@ -581,7 +592,7 @@ async def send_message_stream(
 async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Upload file
@@ -633,7 +644,7 @@ async def upload_file(
 async def get_file_url(
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Get file download URL
@@ -661,7 +672,7 @@ async def edit_message(
     message_id: int,
     update_data: MessageUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_paying_user),
     regenerate_ai: bool = Query(False, description="Regenerate AI response after edit")
 ):
     """
@@ -767,7 +778,7 @@ async def edit_message(
 async def regenerate_response(
     message_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Regenerate AI response for a user message
@@ -828,7 +839,7 @@ async def regenerate_response(
 async def regenerate_response_stream(
     message_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_paying_user)
 ):
     """
     Regenerate AI response with streaming via Server-Sent Events

@@ -160,5 +160,16 @@ class User(Base):
         """Check if user has mentor role"""
         return self.role == UserRole.MENTOR
 
+    @property
+    def is_payment_locked(self) -> bool:
+        """
+        True when the user has been paused by the dunning worker after
+        3+ failed payment retries. Paid endpoints reject with 402 while
+        this flag is set; the dashboard renders a "Payment required"
+        banner driven off this flag. Cleared automatically when the user
+        successfully updates their payment method.
+        """
+        return self.account_paused_at is not None
+
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"
