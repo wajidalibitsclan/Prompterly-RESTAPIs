@@ -9,10 +9,10 @@ After=network.target
 # home — pydantic-settings failed to open .env at startup.
 User=prompterly
 Group=prompterly
-WorkingDirectory=/home/prompterly/public_html/api
-Environment="PATH=/home/prompterly/public_html/api/.venv/bin"
-EnvironmentFile=/home/prompterly/public_html/api/.env
-ExecStart=/home/prompterly/public_html/api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/home/prompterly/app
+Environment="PATH=/home/prompterly/app/.venv/bin"
+EnvironmentFile=/home/prompterly/app/.env
+ExecStart=/home/prompterly/app/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
 

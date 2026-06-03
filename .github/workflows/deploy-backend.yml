@@ -55,7 +55,11 @@ jobs:
           set -e
           echo "=== Backend API Deployment Started ==="
 
-          PROJECT_PATH="/home/prompterly/public_html/api"
+          # Project lives OUTSIDE the Apache webroot (public_html) so .env and
+          # source files can never be accidentally served. public_html is left
+          # for the frontend build output. This matches the convention used
+          # across all projects on this host.
+          PROJECT_PATH="/home/prompterly/app"
           SERVICE_NAME="prompterly-backend"
           VENV_PATH="$PROJECT_PATH/.venv"
           # Pinned: requirements.txt (alembic 1.17, numpy 2.2, pydantic-core 2.41,
