@@ -144,11 +144,5 @@ dist/
 .claude/
 .cursor/
 .codex/
-seo
 
-# ---------------------------------------------------------------------
-# Accidental shell-redirect artefacts
-# (e.g. running `pip install pkg >=1.1.0` without quotes leaves a file
-# literally named `=1.1.0` because `>` is read as a redirect)
-# ---------------------------------------------------------------------
-=*
+.venv

@@ -20,157 +20,170 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Configure SSH directly instead of using a third-party SSH action.
+      # We previously used `appleboy/ssh-action`, but its tarball stopped
+      # downloading from codeload.github.com (404 on every pinned version),
+      # which silently broke every deploy. Direct ssh + a tiny key-setup
+      # step has zero external action dependencies and is just as concise.
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Add the server to known_hosts to avoid the interactive
+          # "host authenticity" prompt. -H hashes the entries.
+          ssh-keyscan -H -p "$SERVER_PORT" "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
       - name: Deploy to Server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT }}
-          script: |
-            set -e
-            echo "=== Backend API Deployment Started ==="
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -p "$SERVER_PORT" \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              "$SERVER_USERNAME@$SERVER_HOST" \
+              "GITHUB_REPOSITORY='$GITHUB_REPOSITORY' bash -s" <<'REMOTE_SCRIPT'
+          set -e
+          echo "=== Backend API Deployment Started ==="
 
-            PROJECT_PATH="/home/prompterly/public_html/api"
-            SERVICE_NAME="prompterly-backend"
-            VENV_PATH="$PROJECT_PATH/.venv"
+          PROJECT_PATH="/home/prompterly/public_html/api"
+          SERVICE_NAME="prompterly-backend"
+          VENV_PATH="$PROJECT_PATH/.venv"
 
-            # Fix git ownership issue
-            git config --global --add safe.directory "$PROJECT_PATH"
+          # Fix git ownership issue
+          git config --global --add safe.directory "$PROJECT_PATH"
 
-            # Backup .env if exists
-            if [ -f "$PROJECT_PATH/.env" ]; then
-              echo "Backing up .env file..."
-              cp "$PROJECT_PATH/.env" /tmp/prompterly-env-backup
+          # Backup .env if exists
+          if [ -f "$PROJECT_PATH/.env" ]; then
+            echo "Backing up .env file..."
+            cp "$PROJECT_PATH/.env" /tmp/prompterly-env-backup
+          fi
+
+          # If not a git repo, remove and clone fresh
+          if [ ! -d "$PROJECT_PATH/.git" ]; then
+            echo "Not a git repo. Setting up fresh clone..."
+            rm -rf "$PROJECT_PATH"
+            mkdir -p "$PROJECT_PATH"
+            git clone "https://github.com/${GITHUB_REPOSITORY}.git" "$PROJECT_PATH"
+          fi
+
+          cd "$PROJECT_PATH"
+
+          echo "Pulling latest code..."
+          git fetch origin main
+          git reset --hard origin/main
+          git clean -fd --exclude=.venv --exclude=uploads
+
+          # Restore .env if backed up
+          if [ -f "/tmp/prompterly-env-backup" ]; then
+            echo "Restoring .env file..."
+            cp /tmp/prompterly-env-backup "$PROJECT_PATH/.env"
+            rm /tmp/prompterly-env-backup
+          fi
+
+          # Function to check if venv is healthy
+          check_venv() {
+            if [ ! -d "$VENV_PATH" ]; then
+              echo "Venv directory does not exist"
+              return 1
             fi
-
-            # If not a git repo, remove and clone fresh
-            if [ ! -d "$PROJECT_PATH/.git" ]; then
-              echo "Not a git repo. Setting up fresh clone..."
-              rm -rf "$PROJECT_PATH"
-              mkdir -p "$PROJECT_PATH"
-              git clone https://github.com/${{ github.repository }}.git "$PROJECT_PATH"
+            if [ ! -f "$VENV_PATH/bin/python" ]; then
+              echo "Venv python not found"
+              return 1
             fi
-
-            cd "$PROJECT_PATH"
-
-            echo "Pulling latest code..."
-            git fetch origin main
-            git reset --hard origin/main
-            git clean -fd --exclude=.venv --exclude=uploads
-
-            # Restore .env if backed up
-            if [ -f "/tmp/prompterly-env-backup" ]; then
-              echo "Restoring .env file..."
-              cp /tmp/prompterly-env-backup "$PROJECT_PATH/.env"
-              rm /tmp/prompterly-env-backup
+            if [ ! -f "$VENV_PATH/bin/pip" ]; then
+              echo "Venv pip not found"
+              return 1
             fi
+            SHEBANG=$(head -1 "$VENV_PATH/bin/pip" 2>/dev/null || echo "")
+            if echo "$SHEBANG" | grep -q "/home/wajid-ali\|/Users/\|C:\\\\"; then
+              echo "Venv has incorrect shebang (from different machine): $SHEBANG"
+              return 1
+            fi
+            if ! "$VENV_PATH/bin/python" --version > /dev/null 2>&1; then
+              echo "Venv python doesn't execute properly"
+              return 1
+            fi
+            return 0
+          }
 
-            # Function to check if venv is healthy
-            check_venv() {
-              if [ ! -d "$VENV_PATH" ]; then
-                echo "Venv directory does not exist"
-                return 1
-              fi
-              if [ ! -f "$VENV_PATH/bin/python" ]; then
-                echo "Venv python not found"
-                return 1
-              fi
-              if [ ! -f "$VENV_PATH/bin/pip" ]; then
-                echo "Venv pip not found"
-                return 1
-              fi
-              # Check if shebang points to a valid path (not a different machine's path)
-              SHEBANG=$(head -1 "$VENV_PATH/bin/pip" 2>/dev/null || echo "")
-              if echo "$SHEBANG" | grep -q "/home/wajid-ali\|/Users/\|C:\\\\"; then
-                echo "Venv has incorrect shebang (from different machine): $SHEBANG"
-                return 1
-              fi
-              # Test if python in venv actually works
-              if ! "$VENV_PATH/bin/python" --version > /dev/null 2>&1; then
-                echo "Venv python doesn't execute properly"
-                return 1
-              fi
-              return 0
-            }
+          echo "Checking virtual environment..."
+          if ! check_venv; then
+            echo "Virtual environment is missing or corrupted. Recreating..."
+            rm -rf "$VENV_PATH"
+            python3 -m venv "$VENV_PATH"
+            echo "Virtual environment created successfully."
+          else
+            echo "Virtual environment is healthy."
+          fi
 
-            # Check and recreate venv if needed
-            echo "Checking virtual environment..."
-            if ! check_venv; then
-              echo "Virtual environment is missing or corrupted. Recreating..."
-              rm -rf "$VENV_PATH"
-              python3 -m venv "$VENV_PATH"
-              echo "Virtual environment created successfully."
+          echo "Installing/Updating dependencies..."
+          "$VENV_PATH/bin/pip" install --upgrade pip
+          "$VENV_PATH/bin/pip" install -r requirements.txt
+
+          if [ ! -f "$VENV_PATH/bin/uvicorn" ]; then
+            echo "ERROR: uvicorn not found in venv after installation!"
+            echo "Attempting to install uvicorn directly..."
+            "$VENV_PATH/bin/pip" install uvicorn
+          fi
+
+          echo "Verifying installation..."
+          "$VENV_PATH/bin/python" -c "import uvicorn; print('uvicorn OK')"
+          "$VENV_PATH/bin/python" -c "import fastapi; print('fastapi OK')"
+
+          echo "Running database migrations..."
+          "$VENV_PATH/bin/alembic" upgrade head || echo "Migration skipped or failed"
+
+          mkdir -p "$PROJECT_PATH/uploads"
+          chmod 755 "$PROJECT_PATH/uploads"
+
+          echo "Updating systemd service..."
+          sudo cp deployment/prompterly-backend.service /etc/systemd/system/${SERVICE_NAME}.service
+          sudo systemctl daemon-reload
+          sudo systemctl enable ${SERVICE_NAME}
+
+          echo "Stopping backend service..."
+          sudo systemctl stop ${SERVICE_NAME} || true
+
+          echo "Starting backend service..."
+          sudo systemctl start ${SERVICE_NAME}
+
+          echo "Waiting for service to start..."
+          sleep 5
+
+          echo "Checking service status..."
+          if sudo systemctl is-active --quiet ${SERVICE_NAME}; then
+            echo "Service is running!"
+            sudo systemctl status ${SERVICE_NAME} --no-pager
+          else
+            echo "ERROR: Service failed to start!"
+            sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager
+            exit 1
+          fi
+
+          echo "Testing health endpoint..."
+          for i in 1 2 3 4 5; do
+            if curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "Health check passed!"
+              curl -s http://127.0.0.1:8000/health
+              break
             else
-              echo "Virtual environment is healthy."
+              echo "Health check attempt $i failed, waiting..."
+              sleep 2
             fi
-
-            # Always use the venv's pip directly (not relying on activate)
-            echo "Installing/Updating dependencies..."
-            "$VENV_PATH/bin/pip" install --upgrade pip
-            "$VENV_PATH/bin/pip" install -r requirements.txt
-
-            # Verify uvicorn is installed
-            if [ ! -f "$VENV_PATH/bin/uvicorn" ]; then
-              echo "ERROR: uvicorn not found in venv after installation!"
-              echo "Attempting to install uvicorn directly..."
-              "$VENV_PATH/bin/pip" install uvicorn
+            if [ $i -eq 5 ]; then
+              echo "WARNING: Health check failed after 5 attempts"
             fi
+          done
 
-            # Final verification
-            echo "Verifying installation..."
-            "$VENV_PATH/bin/python" -c "import uvicorn; print('uvicorn OK')"
-            "$VENV_PATH/bin/python" -c "import fastapi; print('fastapi OK')"
-
-            echo "Running database migrations..."
-            "$VENV_PATH/bin/alembic" upgrade head || echo "Migration skipped or failed"
-
-            # Create uploads directory if not exists
-            mkdir -p "$PROJECT_PATH/uploads"
-            chmod 755 "$PROJECT_PATH/uploads"
-
-            # Update systemd service
-            echo "Updating systemd service..."
-            sudo cp deployment/prompterly-backend.service /etc/systemd/system/${SERVICE_NAME}.service
-            sudo systemctl daemon-reload
-            sudo systemctl enable ${SERVICE_NAME}
-
-            # Stop service before restart to ensure clean state
-            echo "Stopping backend service..."
-            sudo systemctl stop ${SERVICE_NAME} || true
-
-            echo "Starting backend service..."
-            sudo systemctl start ${SERVICE_NAME}
-
-            # Wait for service to start
-            echo "Waiting for service to start..."
-            sleep 5
-
-            # Check service status
-            echo "Checking service status..."
-            if sudo systemctl is-active --quiet ${SERVICE_NAME}; then
-              echo "Service is running!"
-              sudo systemctl status ${SERVICE_NAME} --no-pager
-            else
-              echo "ERROR: Service failed to start!"
-              sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager
-              exit 1
-            fi
-
-            # Test health endpoint with retries
-            echo "Testing health endpoint..."
-            for i in 1 2 3 4 5; do
-              if curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
-                echo "Health check passed!"
-                curl -s http://127.0.0.1:8000/health
-                break
-              else
-                echo "Health check attempt $i failed, waiting..."
-                sleep 2
-              fi
-              if [ $i -eq 5 ]; then
-                echo "WARNING: Health check failed after 5 attempts"
-              fi
-            done
-
-            echo "=== Backend API Deployment Completed ==="
+          echo "=== Backend API Deployment Completed ==="
+          REMOTE_SCRIPT

@@ -82,8 +82,13 @@ class JSONFormatter(logging.Formatter):
             "line": record.lineno,
         }
 
-        # Add extra fields
-        for key in ['request_id', 'user_id', 'user_uuid', 'endpoint', 'method', 'status_code', 'duration_ms', 'ip_address', 'error_code']:
+        # Add extra fields. Whitelist is deliberate — never emit raw email,
+        # name, message body, or other PII via structured logs.
+        for key in [
+            'request_id', 'user_id', 'user_uuid', 'endpoint', 'method',
+            'status_code', 'duration_ms', 'ip_address', 'error_code',
+            'event', 'success', 'email_masked',
+        ]:
             if hasattr(record, key):
                 log_data[key] = getattr(record, key)
 
@@ -244,32 +249,55 @@ def log_api_request(
     logger.log(level, msg, extra=extra)
 
 
+def _mask_email_for_log(email: Optional[str]) -> Optional[str]:
+    """Lightweight email masking for log payloads — avoids a circular import on
+    app.core.email_2fa. Returns 'a***@example.com' style output."""
+    if not email or "@" not in email:
+        return None
+    local, _, domain = email.partition("@")
+    if len(local) <= 1:
+        return f"{local}***@{domain}"
+    return f"{local[0]}{'*' * max(1, len(local) - 1)}@{domain}"
+
+
 def log_auth_event(
     logger: logging.Logger,
     event: str,
-    email: str,
+    email: Optional[str],
     success: bool,
     ip_address: Optional[str] = None,
     reason: Optional[str] = None,
     user_uuid: Optional[str] = None
 ):
-    """Log authentication events for security auditing. Uses user_uuid for pseudonymisation."""
+    """
+    Log authentication events for security auditing.
+
+    Pseudonymisation (Security Standard §2.5): logs MUST NOT contain raw PII.
+    When `user_uuid` is provided, it is used as the primary identifier and the
+    email is omitted from the structured payload. When no user_uuid is
+    available (pre-account flows, failed logins for unknown users, etc.) the
+    email is masked before being written.
+    """
     extra = {
         'event': event,
         'success': success,
     }
-    # Use user_uuid in logs when available (pseudonymisation)
     if user_uuid:
         extra['user_uuid'] = user_uuid
-    extra['email'] = email
+        identifier = user_uuid
+    else:
+        masked = _mask_email_for_log(email)
+        if masked:
+            extra['email_masked'] = masked
+            identifier = masked
+        else:
+            identifier = 'unknown'
     if ip_address:
         extra['ip_address'] = ip_address
 
     if success:
-        identifier = user_uuid or email
         logger.info(f"AUTH: {event} - {identifier} - SUCCESS", extra=extra)
     else:
-        identifier = user_uuid or email
         logger.warning(f"AUTH: {event} - {identifier} - FAILED - {reason or 'Unknown reason'}", extra=extra)
 
 

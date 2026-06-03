@@ -2,7 +2,9 @@
 Admin API endpoints
 Handles admin dashboard, user management, and analytics
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks, Request
+from app.services import audit_log_service as audit_log
+from app.services.audit_log_service import AuditAction
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import List, Optional
@@ -15,13 +17,15 @@ from app.core.timezone import now_naive
 from app.core.jwt import get_current_admin, get_current_admin_mfa
 from app.db.models.user import User, UserRole
 from app.db.models.mentor import Mentor
-from app.db.models.lounge import Lounge, LoungeMembership, AccessType
+from app.db.models.lounge import Lounge, LoungeMembership, AccessType, LoungeConfigVersion
+from app.db.models.support_style import SupportStyleVersion
+from app.services import lounge_versioning_service
 from app.db.models.mentor import Category
 from app.db.models.billing import Subscription, Payment, SubscriptionStatus, LoungeSubscription, PaymentStatus, LoungePlanType
 from app.db.models.note import Note
 from app.db.models.lounge_resource import LoungeResource
 from app.db.models.newsletter import NewsletterSubscriber, SubscriberStatus
-from app.db.models.misc import ContactMessage, ContactMessageStatus
+from app.db.models.misc import ContactMessage, ContactMessageStatus, AuditLog
 from app.db.models.file import File as FileModel
 from app.db.models.chat import ChatMessage
 from app.schemas.admin import (
@@ -44,7 +48,7 @@ from app.schemas.admin import (
     UpdateContactMessageStatusRequest
 )
 from app.core.security import hash_password
-from app.services.file_service import file_service
+from app.services.file_service import file_service, display_filename
 from app.services.billing_service import billing_service
 from app.services.email_service import send_user_credentials_email_sync, send_mentor_welcome_email_sync
 from app.services.lounge_resource_service import lounge_resource_service
@@ -190,7 +194,7 @@ async def get_platform_health(
 @router.get("/users", response_model=PaginatedUsersResponse)
 async def list_users(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin),
+    admin_user: User = Depends(get_current_admin_mfa),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     role: Optional[str] = None,
@@ -268,8 +272,9 @@ async def list_users(
 async def update_user_role(
     user_id: int,
     role_update: UpdateUserRoleRequest,
+    request: Request,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Update user role
@@ -294,10 +299,41 @@ async def update_user_role(
             detail=f"Invalid role: {role_update.role}"
         )
     
+    old_role = user.role.value if user.role else None
     user.role = new_role
+
+    # Keep the `mentors` table in sync with the user's role. The lounge
+    # admin UI queries `mentors WHERE status = APPROVED` to populate its
+    # mentor dropdown, so a User with role=mentor but no approved Mentor
+    # row would otherwise be invisible to the lounge editor.
+    from app.db.models.mentor import MentorStatus
+    mentor_row = db.query(Mentor).filter(Mentor.user_id == user.id).first()
+    if new_role == UserRole.MENTOR:
+        if mentor_row is None:
+            # First time being made a mentor — provision an approved row
+            # so this user immediately shows up in the lounge dropdown.
+            db.add(Mentor(user_id=user.id, status=MentorStatus.APPROVED))
+        elif mentor_row.status != MentorStatus.APPROVED:
+            # Re-promoting a previously-demoted mentor.
+            mentor_row.status = MentorStatus.APPROVED
+    else:
+        # User is being demoted from mentor → member/admin. Disable the
+        # mentor profile so it no longer appears in pickers, but DO NOT
+        # delete it — historical lounge / chat / config-version rows
+        # reference `mentors.id` and must keep resolving.
+        if mentor_row is not None and mentor_row.status == MentorStatus.APPROVED:
+            mentor_row.status = MentorStatus.DISABLED
+
     db.commit()
     db.refresh(user)
-    
+
+    audit_log.record(
+        AuditAction.ADMIN_USER_ROLE_CHANGE, actor=admin_user, request=request,
+        entity_type="User", entity_id=user.id,
+        changes={"role": {"old": old_role, "new": new_role.value}},
+        audit_metadata={"target_user_uuid": user.user_uuid},
+    )
+
     return UserManagementResponse(
         id=user.id,
         email=user.email,
@@ -313,33 +349,44 @@ async def update_user_role(
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Delete user (admin)
-    
+
     - Requires admin role
     - Permanently deletes user and data
     """
     user = db.query(User).filter(User.id == user_id).first()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
     # Prevent deleting yourself
     if user.id == admin_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete yourself"
         )
-    
+
+    # Capture identifiers BEFORE delete — the row's about to vanish.
+    target_uuid = user.user_uuid
+    target_id = user.id
+
     db.delete(user)
     db.commit()
-    
+
+    audit_log.record(
+        AuditAction.ADMIN_USER_DELETE, actor=admin_user, request=request,
+        entity_type="User", entity_id=target_id,
+        audit_metadata={"target_user_uuid": target_uuid},
+    )
+
     return None
 
 
@@ -467,7 +514,7 @@ async def get_revenue_report(
 @router.get("/mentors")
 async def get_all_mentors(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin),
+    admin_user: User = Depends(get_current_admin_mfa),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500)
 ):
@@ -500,7 +547,7 @@ async def get_all_mentors(
 @router.get("/mentors/pending")
 async def get_pending_mentors(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Get pending mentor applications
@@ -533,7 +580,7 @@ async def get_pending_mentors(
 @router.get("/export/users")
 async def export_users(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Export user data (CSV format)
@@ -720,6 +767,16 @@ async def admin_create_lounge(
     )
 
     db.add(lounge)
+    db.flush()  # need lounge.id for the initial config version
+
+    # Mentor IP versioning (Security Standard §15): record v1 at creation
+    # so every subsequent chat thread can reference a config version.
+    lounge_versioning_service.snapshot(
+        lounge, db=db,
+        created_by=admin_user,
+        change_notes="Initial version (lounge created)",
+    )
+
     db.commit()
     db.refresh(lounge)
 
@@ -850,11 +907,16 @@ async def admin_update_lounge(
     is_public_listing: Optional[bool] = None,
     about: Optional[str] = None,
     brand_color: Optional[str] = None,
+    change_notes: Optional[str] = None,
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
     """
-    Update lounge details (admin only)
+    Update lounge details (admin only).
+
+    Any change to a mentor-IP field triggers a new immutable config
+    version (Security Standard §15). Slug changes alone do not — slug is
+    a URL artefact, not part of the mentor IP.
     """
     lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
 
@@ -863,6 +925,10 @@ async def admin_update_lounge(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lounge not found"
         )
+
+    # Snapshot fields BEFORE mutating so we can detect a real config change
+    # and skip versioning when this is a no-op (e.g. PUT with same values).
+    before = lounge_versioning_service._snapshot_payload(lounge)
 
     # Update fields if provided
     if title is not None:
@@ -925,6 +991,15 @@ async def admin_update_lounge(
     if brand_color is not None:
         lounge.brand_color = brand_color
 
+    # Mentor IP versioning — only snapshot when a tracked field actually changed.
+    after = lounge_versioning_service._snapshot_payload(lounge)
+    if before != after:
+        lounge_versioning_service.snapshot(
+            lounge, db=db,
+            created_by=admin_user,
+            change_notes=change_notes,
+        )
+
     db.commit()
     db.refresh(lounge)
 
@@ -982,6 +1057,379 @@ async def admin_delete_lounge(
     db.commit()
 
     return None
+
+
+# =============================================================================
+# Support Style Versioning (S1 / S19 / S20)
+# =============================================================================
+
+@router.get("/support-styles/versions")
+async def list_support_style_versions(
+    slug: Optional[str] = Query(None, description="Filter to one slug, or omit for all"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin),
+):
+    """
+    Audit view of every support-style version recorded by startup sync.
+
+    Snippets are still authored in code (see `app/core/support_style.py`),
+    so there's no edit endpoint here — this is provenance only. Use the
+    response to answer "which exact text was active on date X".
+    """
+    query = db.query(SupportStyleVersion)
+    if slug:
+        query = query.filter(SupportStyleVersion.style_slug == slug)
+    versions = query.order_by(
+        SupportStyleVersion.style_slug.asc(),
+        SupportStyleVersion.version_number.desc(),
+    ).all()
+
+    return [
+        {
+            "id": v.id,
+            "style_slug": v.style_slug,
+            "version_number": v.version_number,
+            "is_active": v.is_active,
+            "snippet_hash": v.snippet_hash,
+            "prompt_snippet": v.prompt_snippet,
+            "change_notes": v.change_notes,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+        }
+        for v in versions
+    ]
+
+
+# =============================================================================
+# Audit Log Viewer (Security Standard §8/§9)
+# =============================================================================
+
+def _audit_log_query(
+    db: Session,
+    *,
+    action: Optional[str] = None,
+    actor_user_id: Optional[int] = None,
+    actor_user_uuid: Optional[str] = None,
+    actor_email: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+):
+    """
+    Build the filtered audit-log query shared by the JSON list and the CSV
+    export endpoints. LEFT JOINs `users` so audit entries for deleted
+    accounts still surface — `user_id` may be NULL post-deletion but
+    `user_uuid` is preserved on the audit row.
+    """
+    query = db.query(AuditLog, User).outerjoin(User, AuditLog.user_id == User.id)
+
+    if action:
+        # Use LIKE so partial matches (e.g. "LOGIN" returns LOGIN_SUCCESS +
+        # LOGIN_FAILED + 2FA-related rows) work as a quick filter.
+        query = query.filter(AuditLog.action.ilike(f"%{action}%"))
+    if actor_user_id is not None:
+        query = query.filter(AuditLog.user_id == actor_user_id)
+    if actor_user_uuid:
+        query = query.filter(AuditLog.user_uuid == actor_user_uuid)
+    if actor_email:
+        # Email filter has to hit the joined users table since audit rows
+        # store user_uuid not email by design (§2.5 sanitisation).
+        query = query.filter(User.email.ilike(f"%{actor_email}%"))
+    if entity_type:
+        query = query.filter(AuditLog.entity_type == entity_type)
+    if from_date:
+        query = query.filter(AuditLog.created_at >= from_date)
+    if to_date:
+        query = query.filter(AuditLog.created_at <= to_date)
+
+    return query.order_by(AuditLog.created_at.desc())
+
+
+def _serialize_audit_row(log: AuditLog, user: Optional[User]) -> dict:
+    """Shape a (log, user) row into the response dict the FE consumes."""
+    return {
+        "id": log.id,
+        "action": log.action,
+        "entity_type": log.entity_type,
+        "entity_id": log.entity_id,
+        "ip_address": log.ip_address,
+        "user_agent": log.user_agent,
+        "changes": log.changes,
+        "metadata": log.audit_metadata,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+        "actor": {
+            "user_id": log.user_id,
+            "user_uuid": log.user_uuid,
+            # Denormalised so the FE can render the table without N+1 lookups.
+            # `None` when the actor was a system event (e.g. Stripe webhook)
+            # or the underlying user row has been hard-deleted.
+            "email": user.email if user else None,
+            "name": user.name if user else None,
+            "role": user.role.value if (user and user.role) else None,
+        },
+    }
+
+
+@router.get("/audit-logs")
+async def list_audit_logs(
+    action: Optional[str] = Query(None, description="Substring match on action"),
+    actor_user_id: Optional[int] = Query(None),
+    actor_user_uuid: Optional[str] = Query(None),
+    actor_email: Optional[str] = Query(None, description="Substring match on actor email"),
+    entity_type: Optional[str] = Query(None),
+    from_date: Optional[datetime] = Query(None, description="ISO timestamp"),
+    to_date: Optional[datetime] = Query(None, description="ISO timestamp"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_mfa),
+):
+    """
+    Paginated audit-log viewer (Security Standard §8/§9).
+
+    Gated behind MFA because viewing the audit trail itself reveals which
+    accounts performed which actions — that's the same identity-content
+    link §2.4 says must require multi-factor.
+    """
+    query = _audit_log_query(
+        db,
+        action=action,
+        actor_user_id=actor_user_id,
+        actor_user_uuid=actor_user_uuid,
+        actor_email=actor_email,
+        entity_type=entity_type,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    total = query.count()
+    rows = query.offset((page - 1) * limit).limit(limit).all()
+
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": (total + limit - 1) // limit,
+        "items": [_serialize_audit_row(log, user) for log, user in rows],
+    }
+
+
+@router.get("/audit-logs/actions")
+async def list_audit_log_actions(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_mfa),
+):
+    """
+    Return the distinct set of action names seen in the audit log,
+    sorted by most recent occurrence. Powers the action-filter dropdown
+    in the FE so admins don't need to remember the vocabulary.
+    """
+    rows = db.query(
+        AuditLog.action,
+        func.max(AuditLog.created_at).label("last_seen"),
+    ).group_by(AuditLog.action).order_by(func.max(AuditLog.created_at).desc()).all()
+
+    return [{"action": r[0], "last_seen": r[1].isoformat() if r[1] else None} for r in rows]
+
+
+@router.get("/audit-logs.csv")
+async def export_audit_logs_csv(
+    action: Optional[str] = Query(None),
+    actor_user_id: Optional[int] = Query(None),
+    actor_user_uuid: Optional[str] = Query(None),
+    actor_email: Optional[str] = Query(None),
+    entity_type: Optional[str] = Query(None),
+    from_date: Optional[datetime] = Query(None),
+    to_date: Optional[datetime] = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_mfa),
+):
+    """
+    CSV export of the same filtered audit-log view. Capped at 10,000 rows
+    per call — auditors who need more should narrow the date range or
+    paginate via the JSON endpoint.
+    """
+    import csv
+    import io
+    import json as json_mod
+    from fastapi.responses import Response as FastAPIResponse
+
+    EXPORT_CAP = 10000
+    query = _audit_log_query(
+        db,
+        action=action,
+        actor_user_id=actor_user_id,
+        actor_user_uuid=actor_user_uuid,
+        actor_email=actor_email,
+        entity_type=entity_type,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    rows = query.limit(EXPORT_CAP).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "id", "created_at", "action", "actor_user_id", "actor_user_uuid",
+        "actor_email", "actor_name", "actor_role",
+        "entity_type", "entity_id", "ip_address", "user_agent",
+        "changes_json", "metadata_json",
+    ])
+    for log, user in rows:
+        writer.writerow([
+            log.id,
+            log.created_at.isoformat() if log.created_at else "",
+            log.action,
+            log.user_id or "",
+            log.user_uuid or "",
+            (user.email if user else "") or "",
+            (user.name if user else "") or "",
+            (user.role.value if (user and user.role) else "") or "",
+            log.entity_type or "",
+            log.entity_id or "",
+            log.ip_address or "",
+            log.user_agent or "",
+            json_mod.dumps(log.changes) if log.changes else "",
+            json_mod.dumps(log.audit_metadata) if log.audit_metadata else "",
+        ])
+
+    # Audit the audit-log export itself — auditors auditing the auditors.
+    audit_log.record(
+        AuditAction.DATA_EXPORT, actor=admin_user,
+        audit_metadata={"export": "audit_logs_csv", "row_count": len(rows)},
+    )
+
+    filename = f"audit_logs_{now_naive().strftime('%Y%m%d_%H%M%S')}.csv"
+    return FastAPIResponse(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# =============================================================================
+# Mentor IP Config Versioning (Security Standard §15)
+# =============================================================================
+
+@router.get("/lounges/{lounge_id}/config-versions")
+async def list_lounge_config_versions(
+    lounge_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_mfa),
+):
+    """
+    List every config version recorded for a lounge, newest first.
+
+    Versions are immutable. Each row carries enough context (version_number,
+    created_at, created_by, change_notes, is_active) to drive a "history"
+    UI without paginating the full payloads.
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+    if not lounge:
+        raise HTTPException(status_code=404, detail="Lounge not found")
+
+    versions = db.query(LoungeConfigVersion).filter(
+        LoungeConfigVersion.lounge_id == lounge_id,
+    ).order_by(LoungeConfigVersion.version_number.desc()).all()
+
+    return [
+        {
+            "id": v.id,
+            "version_number": v.version_number,
+            "is_active": v.is_active,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "created_by": v.created_by,
+            "change_notes": v.change_notes,
+        }
+        for v in versions
+    ]
+
+
+@router.get("/lounges/{lounge_id}/config-versions/{version_id}")
+async def get_lounge_config_version(
+    lounge_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_mfa),
+):
+    """Return the full snapshot for a specific config version."""
+    version = db.query(LoungeConfigVersion).filter(
+        LoungeConfigVersion.id == version_id,
+        LoungeConfigVersion.lounge_id == lounge_id,
+    ).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Config version not found")
+
+    return {
+        "id": version.id,
+        "lounge_id": version.lounge_id,
+        "version_number": version.version_number,
+        "is_active": version.is_active,
+        "system_prompt": version.system_prompt,
+        "mentor_framework": version.mentor_framework,
+        "prompt_templates": version.prompt_templates,
+        "behavioural_guardrails": version.behavioural_guardrails,
+        "tone_config": version.tone_config,
+        "ai_model": version.ai_model,
+        "created_at": version.created_at.isoformat() if version.created_at else None,
+        "created_by": version.created_by,
+        "change_notes": version.change_notes,
+    }
+
+
+@router.post("/lounges/{lounge_id}/config-versions/{version_id}/rollback")
+async def rollback_lounge_config(
+    lounge_id: int,
+    version_id: int,
+    request: Request,
+    change_notes: Optional[str] = Query(None, description="Optional reason for the rollback"),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_mfa),
+):
+    """
+    Roll the lounge back to a previous config version.
+
+    History is preserved — the rollback creates a NEW immutable version
+    whose snapshot equals the target version's snapshot. Subsequent chat
+    threads will pin to that new version.
+
+    `access_type` and `mentor_id` are intentionally NOT auto-restored even
+    if they differ in the target snapshot — see `lounge_versioning_service`
+    for the reasoning (Stripe / billing side effects).
+    """
+    lounge = db.query(Lounge).filter(Lounge.id == lounge_id).first()
+    if not lounge:
+        raise HTTPException(status_code=404, detail="Lounge not found")
+
+    try:
+        new_version = lounge_versioning_service.rollback_to(
+            lounge, version_id, db=db,
+            created_by=admin_user,
+            change_notes=change_notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    db.commit()
+    db.refresh(lounge)
+    db.refresh(new_version)
+
+    audit_log.record(
+        AuditAction.LOUNGE_CONFIG_ROLLBACK,
+        actor=admin_user, request=request,
+        entity_type="Lounge", entity_id=lounge.id,
+        audit_metadata={
+            "rolled_back_to_version_id": version_id,
+            "new_version_id": new_version.id,
+            "new_version_number": new_version.version_number,
+        },
+    )
+
+    return {
+        "lounge_id": lounge.id,
+        "new_version_id": new_version.id,
+        "new_version_number": new_version.version_number,
+        "rolled_back_to_version_id": version_id,
+    }
 
 
 # =============================================================================
@@ -1148,7 +1596,7 @@ async def create_user(
     user_data: CreateUserRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Create a new user (admin only)
@@ -1210,7 +1658,7 @@ async def create_user(
 async def get_user(
     user_id: int,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Get single user details (admin only)
@@ -1258,7 +1706,7 @@ async def update_user(
     user_id: int,
     user_data: UpdateUserRequest,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Update user details (admin only)
@@ -1323,7 +1771,7 @@ async def upload_user_avatar(
     user_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Upload avatar for a user (admin only)
@@ -1408,7 +1856,7 @@ async def upload_user_avatar(
 async def get_mentor(
     mentor_id: int,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Get single mentor details (admin only)
@@ -1463,7 +1911,7 @@ async def create_mentor(
     mentor_data: CreateMentorRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Create a mentor profile (admin only)
@@ -1578,7 +2026,7 @@ async def update_mentor(
     mentor_id: int,
     mentor_data: UpdateMentorRequest,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Update mentor details (admin only)
@@ -1690,7 +2138,7 @@ async def update_mentor(
 async def delete_mentor(
     mentor_id: int,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Delete mentor profile (admin only)
@@ -1719,7 +2167,7 @@ async def delete_mentor(
 @router.get("/subscriptions", response_model=PaginatedSubscriptionsResponse)
 async def get_user_subscriptions(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin),
+    admin_user: User = Depends(get_current_admin_mfa),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -1821,7 +2269,7 @@ async def get_user_subscriptions(
 async def get_subscription_detail(
     subscription_id: int,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Get detailed lounge subscription information (admin only)
@@ -1931,7 +2379,7 @@ async def get_all_lounge_resources(
             file_url=file_url,
             file_type=file_record.mime_type if file_record else None,
             file_size=file_record.size_bytes if file_record else 0,
-            file_name=file_record.storage_path.split('/')[-1] if file_record and file_record.storage_path else None,
+            file_name=display_filename(file_record.storage_path) if file_record else None,
             created_at=resource.created_at
         ))
 
@@ -2213,7 +2661,7 @@ async def update_chatbot_config(
 @router.get("/newsletter/subscribers")
 async def get_newsletter_subscribers(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin),
+    admin_user: User = Depends(get_current_admin_mfa),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status_filter: Optional[str] = Query(None, description="Filter by status: active, unsubscribed"),
@@ -2309,7 +2757,7 @@ async def get_newsletter_stats(
 async def delete_newsletter_subscriber(
     subscriber_id: int,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin)
+    admin_user: User = Depends(get_current_admin_mfa)
 ):
     """
     Delete a newsletter subscriber (admin only)
@@ -2333,7 +2781,7 @@ async def delete_newsletter_subscriber(
 @router.post("/newsletter/export")
 async def export_newsletter_subscribers(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(get_current_admin),
+    admin_user: User = Depends(get_current_admin_mfa),
     status_filter: Optional[str] = Query(None, description="Filter by status: active, unsubscribed")
 ):
     """
@@ -2393,7 +2841,7 @@ async def list_contact_messages(
     status_filter: Optional[str] = Query(None, description="Filter by status: new, read, replied, archived"),
     search: Optional[str] = Query(None, description="Search by name, email, or subject"),
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin)
+    current_admin: User = Depends(get_current_admin_mfa)
 ):
     """
     List all contact messages with pagination and filtering.
@@ -2450,7 +2898,7 @@ async def list_contact_messages(
 async def get_contact_message(
     contact_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin)
+    current_admin: User = Depends(get_current_admin_mfa)
 ):
     """
     Get a single contact message by ID.
@@ -2491,7 +2939,7 @@ async def update_contact_message_status(
     contact_id: int,
     request: UpdateContactMessageStatusRequest,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin)
+    current_admin: User = Depends(get_current_admin_mfa)
 ):
     """
     Update contact message status.
@@ -2532,7 +2980,7 @@ async def update_contact_message_status(
 async def delete_contact_message(
     contact_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin)
+    current_admin: User = Depends(get_current_admin_mfa)
 ):
     """
     Delete a contact message.
@@ -2559,9 +3007,10 @@ async def delete_contact_message(
 @router.post("/users/{user_id}/legal-hold")
 async def set_legal_hold(
     user_id: int,
+    request: Request,
     reason: str = Query(..., min_length=1, description="Reason for legal hold"),
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    admin: User = Depends(get_current_admin_mfa)
 ):
     """
     Place a legal hold on a user account.
@@ -2576,6 +3025,12 @@ async def set_legal_hold(
     user.legal_hold_set_at = now_naive()
     db.commit()
 
+    audit_log.record(
+        AuditAction.LEGAL_HOLD_SET, actor=admin, request=request,
+        entity_type="User", entity_id=user.id,
+        audit_metadata={"target_user_uuid": user.user_uuid, "reason": reason},
+    )
+
     return {
         "success": True,
         "message": f"Legal hold placed on user {user_id}",
@@ -2588,8 +3043,9 @@ async def set_legal_hold(
 @router.delete("/users/{user_id}/legal-hold")
 async def remove_legal_hold(
     user_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    admin: User = Depends(get_current_admin_mfa)
 ):
     """Remove legal hold from a user account."""
     user = db.query(User).filter(User.id == user_id).first()
@@ -2601,13 +3057,19 @@ async def remove_legal_hold(
     user.legal_hold_set_at = None
     db.commit()
 
+    audit_log.record(
+        AuditAction.LEGAL_HOLD_REMOVED, actor=admin, request=request,
+        entity_type="User", entity_id=user.id,
+        audit_metadata={"target_user_uuid": user.user_uuid},
+    )
+
     return {"success": True, "message": f"Legal hold removed from user {user_id}"}
 
 
 @router.get("/legal-holds")
 async def list_legal_holds(
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    admin: User = Depends(get_current_admin_mfa)
 ):
     """List all users currently under legal hold."""
     users = db.query(User).filter(User.legal_hold == True).all()

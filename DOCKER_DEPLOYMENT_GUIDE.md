@@ -629,6 +629,48 @@ docker-compose exec mysql mysqldump -u root -p ai_coaching > backup.sql
 docker-compose exec -T mysql mysql -u root -p ai_coaching < backup.sql
 ```
 
+### MySQL Transparent Data Encryption (TDE)
+
+Production MySQL is configured with InnoDB tablespace encryption via
+`mysql/conf.d/secure.cnf` (`default_table_encryption=ON`, `keyring_file`
+plugin). The keyring file lives on the dedicated `mysql_keyring` Docker volume.
+
+**⚠️ Keyring backup is NOT optional.** The keyring file is the master
+encryption key for every tablespace. If you lose it, the data on
+`mysql_data` is unrecoverable — including from any logical backup made
+after encryption was enabled.
+
+```bash
+# Back up the keyring SEPARATELY from mysql_data — different bucket,
+# different IAM role, different KMS key.
+docker run --rm \
+  -v ai_coaching_mysql_keyring:/keyring:ro \
+  -v "$PWD":/out alpine \
+  tar czf /out/keyring-$(date +%F).tar.gz -C /keyring .
+
+# Upload the tarball to a separate S3 bucket — e.g. one with object lock
+# enabled and a different KMS key than the application data bucket.
+aws s3 cp keyring-$(date +%F).tar.gz \
+  s3://your-keyring-vault/$(date +%F)/ --sse aws:kms \
+  --sse-kms-key-id alias/prompterly-mysql-keyring
+```
+
+**One-time migration of existing tables** (run once after enabling TDE on a
+database that already had unencrypted tables):
+
+```sql
+-- List unencrypted tables
+SELECT TABLE_SCHEMA, TABLE_NAME, CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'ai_coaching'
+  AND CREATE_OPTIONS NOT LIKE '%ENCRYPTION%';
+
+-- Encrypt them in place (this rewrites the tablespace — schedule
+-- during a quiet window; expect roughly the same I/O cost as OPTIMIZE TABLE)
+ALTER TABLE ai_coaching.users ENCRYPTION='Y';
+-- ... repeat for every table returned above
+```
+
 ### Update Application
 
 ```bash

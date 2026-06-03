@@ -127,6 +127,11 @@ class LoungeSubscriptionResponse(BaseModel):
     # Lounge details
     lounge_title: str
     lounge_slug: str
+    # The mentor who owns this lounge. Two mentors may run lounges in the
+    # same niche (e.g. "Mindset"), so the UI needs the mentor name to
+    # disambiguate. Optional because the mentor row could be missing for
+    # very old / partially-deleted data.
+    mentor_name: Optional[str] = None
 
     # Computed
     is_active: bool = False

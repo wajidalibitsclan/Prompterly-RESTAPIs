@@ -1,6 +1,6 @@
 """
 Main FastAPI application entry point
-AI Coaching Lounges Platform
+AI Coaching Lounges Platform -- FAST
 """
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +65,19 @@ async def lifespan(app: FastAPI):
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}", exc_info=True)
+
+    # Reconcile the in-code support-style catalogue with the DB tables
+    # (Security Standard §15 — Task S1/S19/S20). Any new snippet text
+    # deployed in this release is recorded as a new immutable version
+    # row, so chat threads can pin to it. Best-effort: failure here logs
+    # but doesn't block startup — chat just falls back to no version pin.
+    try:
+        from app.core.support_style import sync_support_style_versions_with_db
+        from app.db.session import SessionLocal
+        with SessionLocal() as _ss_db:
+            sync_support_style_versions_with_db(_ss_db)
+    except Exception as e:
+        logger.warning(f"Support-style version sync skipped: {e}")
 
     # Initialize Sentry if DSN provided
     if settings.SENTRY_DSN:

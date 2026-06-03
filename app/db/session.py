@@ -9,15 +9,22 @@ from typing import Generator
 from app.core.config import settings
 
 
-# Create database engine
-engine = create_engine(
-    settings.DATABASE_URL,
-    echo=settings.DB_ECHO,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_recycle=3600,
-)
+# Create database engine. SQLite uses SingletonThreadPool / NullPool by
+# default and doesn't accept the QueuePool sizing kwargs — guard them so
+# the test harness can point this module at `sqlite:///:memory:` without
+# tripping `TypeError: Invalid argument 'max_overflow'`.
+_engine_kwargs = {
+    "echo": settings.DB_ECHO,
+    "pool_pre_ping": True,
+}
+if not settings.DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_recycle": 3600,
+    })
+
+engine = create_engine(settings.DATABASE_URL, **_engine_kwargs)
 
 # Create session factory
 SessionLocal = sessionmaker(

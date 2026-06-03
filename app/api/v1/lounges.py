@@ -33,8 +33,9 @@ from app.schemas.lounge import (
     JoinLoungeRequest,
     UpdateMemberRole
 )
-from app.services.file_service import file_service
+from app.services.file_service import file_service, display_filename
 from app.services.lounge_resource_service import lounge_resource_service
+from app.services import lounge_versioning_service
 from app.db.models.lounge_resource import LoungeResource
 from app.db.models.file import File as FileModel
 from app.schemas.lounge_resource import (
@@ -541,7 +542,11 @@ async def update_lounge(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only update your own lounges"
         )
-    
+
+    # Snapshot before mutating so a new config version is created only when
+    # the lounge actually changes (Security Standard §15).
+    before = lounge_versioning_service._snapshot_payload(lounge)
+
     # Update fields
     if update_data.title is not None:
         lounge.title = update_data.title
@@ -578,6 +583,15 @@ async def update_lounge(
 
     if update_data.brand_color is not None:
         lounge.brand_color = update_data.brand_color
+
+    # Mentor IP versioning — only snapshot when a tracked field actually changed.
+    after = lounge_versioning_service._snapshot_payload(lounge)
+    if before != after:
+        lounge_versioning_service.snapshot(
+            lounge, db=db,
+            created_by=current_user,
+            change_notes=None,
+        )
 
     db.commit()
     db.refresh(lounge)
@@ -1041,7 +1055,7 @@ async def get_lounge_resources(
             file_url=file_url,
             file_type=file_record.mime_type if file_record else None,
             file_size=file_record.size_bytes if file_record else 0,
-            file_name=file_record.storage_path.split('/')[-1] if file_record and file_record.storage_path else None,
+            file_name=display_filename(file_record.storage_path) if file_record else None,
             created_at=resource.created_at
         ))
 

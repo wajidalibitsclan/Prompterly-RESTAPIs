@@ -34,3 +34,34 @@ max_connections = 200
 # Audit-friendly: log every connection attempt (successful or not).
 # Tune this if log volume becomes a problem.
 log_error_verbosity = 2
+
+# -----------------------------------------------------------------------------
+# Transparent Data Encryption (Security Standard §3 — Encryption At Rest, DB).
+# -----------------------------------------------------------------------------
+# `early-plugin-load` is required because InnoDB consults the keyring during
+# tablespace open, which happens before normal plugins are loaded. We use the
+# file-based keyring for self-hosted MySQL 8.0. The keyring file lives on its
+# own volume (`mysql_keyring`, see docker-compose.prod.yml) so it survives
+# container restarts but is intentionally NOT inside /var/lib/mysql.
+#
+# OPERATIONAL WARNING: the keyring file IS the encryption key. Losing it makes
+# every encrypted tablespace unrecoverable, including from backups. Back the
+# keyring up separately (different bucket / different KMS key) and rotate per
+# Security Standard §3. See DOCKER_DEPLOYMENT_GUIDE.md for the runbook.
+early-plugin-load = keyring_file.so
+keyring_file_data = /var/lib/mysql-keyring/keyring
+
+# Encrypt every new table by default. Existing tables need a one-time
+# `ALTER TABLE ... ENCRYPTION='Y'` to be re-encrypted in place — see the
+# migration step in DOCKER_DEPLOYMENT_GUIDE.md.
+default_table_encryption = ON
+
+# Encrypt the InnoDB redo and undo logs too — otherwise transaction data is
+# visible in plaintext on disk between checkpoints.
+innodb_redo_log_encrypt = ON
+innodb_undo_log_encrypt = ON
+
+# Require that any new tablespace explicitly opt out of encryption rather
+# than silently inheriting an unencrypted default — defence against an
+# operator forgetting `ENCRYPTION='Y'` on a CREATE TABLESPACE.
+table_encryption_privilege_check = ON

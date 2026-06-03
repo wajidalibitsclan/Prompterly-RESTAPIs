@@ -227,3 +227,49 @@ class ContactMessage(Base):
             f"subject={self.subject[:30]}, "
             f"status={self.status})>"
         )
+
+
+class AuditLog(Base):
+    """
+    Audit log for tracking important actions (Security Standard §8/§9).
+
+    Lives in its own table so it can be retained/queried independently of
+    application logs (which rotate after 60 days). Per §9 the audit_cleanup
+    worker keeps these for 12 months.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Pseudonymous identifier — `user_id` may be set to NULL by the cascade
+    # when the user is deleted, but we want the audit trail itself to retain
+    # an opaque reference for compliance / legal-hold purposes (§2.5).
+    user_uuid = Column(String(36), nullable=True, index=True)
+    action = Column(String(100), nullable=False, index=True)
+    entity_type = Column(String(100), nullable=True)
+    entity_id = Column(Integer, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    changes = Column(JSON, nullable=True)  # Before/after values
+    # `metadata` is a reserved attribute on SQLAlchemy declarative bases;
+    # the SQL column keeps the original name to match the existing schema,
+    # but the Python attribute is `audit_metadata`.
+    audit_metadata = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=now_naive, nullable=False, index=True)
+
+    @property
+    def has_changes(self) -> bool:
+        """Check if there are tracked changes."""
+        return self.changes is not None and len(self.changes) > 0
+
+    def __repr__(self):
+        return (
+            f"<AuditLog(id={self.id}, action={self.action}, "
+            f"entity={self.entity_type}/{self.entity_id})>"
+        )

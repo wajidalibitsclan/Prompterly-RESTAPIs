@@ -228,3 +228,27 @@ class LoungeSubscription(Base):
             f"plan_type={self.plan_type}, "
             f"status={self.status})>"
         )
+
+
+class ProcessedStripeEvent(Base):
+    """
+    Idempotency log for Stripe webhook events (Security Standard §11).
+
+    Stripe will retry a webhook delivery on any non-2xx response, and an
+    attacker who captures a valid signed payload could replay it. We INSERT
+    the event id on first receipt and rely on the unique index to reject
+    duplicates — the handler then returns 200 OK without re-processing.
+
+    Rows are pruned by the audit/log cleanup worker after the Stripe replay
+    window expires (Stripe currently retries for up to ~3 days).
+    """
+
+    __tablename__ = "processed_stripe_events"
+
+    # Stripe event IDs look like `evt_1OabcXYZ...` — well under 64 chars.
+    event_id = Column(String(64), primary_key=True)
+    event_type = Column(String(64), nullable=False, index=True)
+    processed_at = Column(DateTime, default=now_naive, nullable=False, index=True)
+
+    def __repr__(self):
+        return f"<ProcessedStripeEvent(event_id={self.event_id}, type={self.event_type})>"
