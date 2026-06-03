@@ -58,6 +58,11 @@ jobs:
           PROJECT_PATH="/home/prompterly/public_html/api"
           SERVICE_NAME="prompterly-backend"
           VENV_PATH="$PROJECT_PATH/.venv"
+          # Pinned: requirements.txt (alembic 1.17, numpy 2.2, pydantic-core 2.41,
+          # cryptography 46, lxml 6) all require Python >=3.10. System python3 on
+          # Ubuntu 20.04 is 3.8/3.9, so we install python3.10 from deadsnakes PPA
+          # on the server and reference it explicitly here.
+          PYTHON_BIN="python3.10"
 
           # Fix git ownership issue
           git config --global --add safe.directory "$PROJECT_PATH"
@@ -113,15 +118,27 @@ jobs:
               echo "Venv python doesn't execute properly"
               return 1
             fi
+            # Reject venvs built with an older Python — requirements.txt
+            # needs >=3.10 (numpy 2.2, alembic 1.17, etc.)
+            if ! "$VENV_PATH/bin/python" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
+              ACTUAL_VER=$("$VENV_PATH/bin/python" --version 2>&1)
+              echo "Venv Python is too old (need >=3.10, got $ACTUAL_VER)"
+              return 1
+            fi
             return 0
           }
 
           echo "Checking virtual environment..."
           if ! check_venv; then
-            echo "Virtual environment is missing or corrupted. Recreating..."
+            echo "Virtual environment is missing or corrupted. Recreating with $PYTHON_BIN..."
+            if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+              echo "ERROR: $PYTHON_BIN is not installed on this server."
+              echo "Install it as root: apt install -y python3.10 python3.10-venv python3.10-dev (deadsnakes PPA must be configured first)"
+              exit 1
+            fi
             rm -rf "$VENV_PATH"
-            python3 -m venv "$VENV_PATH"
-            echo "Virtual environment created successfully."
+            "$PYTHON_BIN" -m venv "$VENV_PATH"
+            echo "Virtual environment created successfully ($("$VENV_PATH/bin/python" --version))."
           else
             echo "Virtual environment is healthy."
           fi
