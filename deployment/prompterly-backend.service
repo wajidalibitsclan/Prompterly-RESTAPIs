@@ -3,8 +3,12 @@ Description=Prompterly Backend API
 After=network.target
 
 [Service]
-User=www-data
-Group=www-data
+# Runs as the prompterly user so the app can read .env (chmod 600) and
+# files under /home/prompterly/public_html (drwxr-x---, prompterly-owned).
+# Previously User=www-data, which had no traversal rights into prompterly's
+# home — pydantic-settings failed to open .env at startup.
+User=prompterly
+Group=prompterly
 WorkingDirectory=/home/prompterly/public_html/api
 Environment="PATH=/home/prompterly/public_html/api/.venv/bin"
 EnvironmentFile=/home/prompterly/public_html/api/.env
