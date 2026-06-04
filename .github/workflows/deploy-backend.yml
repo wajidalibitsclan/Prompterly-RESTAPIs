@@ -193,9 +193,9 @@ jobs:
 
           echo "Testing health endpoint..."
           for i in 1 2 3 4 5; do
-            if curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
+            if curl -sf http://127.0.0.1:8001/health > /dev/null 2>&1; then
               echo "Health check passed!"
-              curl -s http://127.0.0.1:8000/health
+              curl -s http://127.0.0.1:8001/health
               break
             else
               echo "Health check attempt $i failed, waiting..."

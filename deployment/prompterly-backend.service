@@ -12,7 +12,7 @@ Group=prompterly
 WorkingDirectory=/home/prompterly/app
 Environment="PATH=/home/prompterly/app/.venv/bin"
 EnvironmentFile=/home/prompterly/app/.env
-ExecStart=/home/prompterly/app/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+ExecStart=/home/prompterly/app/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=5
 
