@@ -113,9 +113,15 @@ jobs:
               echo "Venv pip not found"
               return 1
             fi
+            # Check the pip shebang's interpreter actually exists & is executable.
+            # Catches: (a) venv copied from another machine (e.g. /home/wajid-ali,
+            # /Users/, C:\...), (b) venv moved between paths on the same machine
+            # (e.g. when we relocated from public_html/api to app/ — the shebangs
+            # still pointed at the old path and pip silently became unusable).
             SHEBANG=$(head -1 "$VENV_PATH/bin/pip" 2>/dev/null || echo "")
-            if echo "$SHEBANG" | grep -q "/home/wajid-ali\|/Users/\|C:\\\\"; then
-              echo "Venv has incorrect shebang (from different machine): $SHEBANG"
+            INTERPRETER=$(echo "$SHEBANG" | sed -E 's|^#!\s*||' | awk '{print $1}')
+            if [ -z "$INTERPRETER" ] || [ ! -x "$INTERPRETER" ]; then
+              echo "Venv pip's interpreter is broken: shebang=$SHEBANG"
               return 1
             fi
             if ! "$VENV_PATH/bin/python" --version > /dev/null 2>&1; then
