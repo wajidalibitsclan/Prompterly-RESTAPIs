@@ -125,6 +125,10 @@ class UserResponse(UserBase):
     language: str = "en"
     timezone: str = "Australia/Sydney"
     is_2fa_enabled: bool = False
+    # False for OAuth-only accounts (e.g. "Continue with Google") that never set
+    # a password. The UI hides "Change password" and the disable-2FA password
+    # field when this is False.
+    has_password: bool = True
     # Notification preferences
     notify_email_enabled: bool = True
     notify_in_app_enabled: bool = True

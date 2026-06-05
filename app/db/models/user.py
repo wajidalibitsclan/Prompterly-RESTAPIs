@@ -171,5 +171,17 @@ class User(Base):
         """
         return self.account_paused_at is not None
 
+    @property
+    def has_password(self) -> bool:
+        """
+        True if the user set a real password; False for OAuth-only accounts
+        (e.g. "Continue with Google") that only carry the synthetic placeholder
+        password. The UI uses this to hide "Change password" and to skip the
+        password requirement when disabling 2FA.
+        """
+        # Imported lazily to avoid a circular import (security has no model deps).
+        from app.core.security import user_has_usable_password
+        return user_has_usable_password(self)
+
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"
