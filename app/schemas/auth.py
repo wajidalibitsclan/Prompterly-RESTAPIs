@@ -231,8 +231,13 @@ class TwoFactorEnable(BaseModel):
 
 
 class TwoFactorDisable(BaseModel):
-    """Schema for disabling 2FA — requires password and current code."""
-    password: str
+    """
+    Schema for disabling 2FA — requires the current code, plus the password
+    for password-based accounts. OAuth-only accounts (e.g. "Continue with
+    Google") have no password and may omit it; the endpoint enforces the
+    password requirement only when the account actually has one.
+    """
+    password: Optional[str] = None
     code: str = Field(..., min_length=6, max_length=6)
 
 

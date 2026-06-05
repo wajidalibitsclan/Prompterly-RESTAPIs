@@ -22,6 +22,8 @@ from app.core.timezone import now_naive
 from app.core.security import (
     hash_password,
     verify_password,
+    oauth_placeholder_password,
+    user_has_usable_password,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -909,7 +911,9 @@ async def google_callback(
             user = User(
                 email=email,
                 name=name,
-                password_hash=hash_password(f"google_oauth_{google_user_id}"),
+                password_hash=hash_password(
+                    oauth_placeholder_password(OAuthProvider.GOOGLE.value, google_user_id)
+                ),
                 role=UserRole.MEMBER,
                 email_verified_at=now_naive()  # Google emails are verified
             )
@@ -1487,9 +1491,15 @@ async def disable_2fa(
     if not current_user.is_2fa_enabled:
         return {"message": "Two-factor authentication is not enabled"}
 
-    if not verify_password(data.password, current_user.password_hash):
-        log_auth_event(logger, "2FA_DISABLE", current_user.email, False, client_ip, "Invalid password", user_uuid=current_user.user_uuid)
-        raise InvalidCredentialsError(message="Incorrect password")
+    # OAuth-only users (e.g. "Continue with Google") never set a password, so we
+    # cannot gate disable on one — they would be permanently locked into 2FA.
+    # For them the second-factor code alone is required; their OAuth login is the
+    # first factor. Password users still must provide password + code.
+    has_password = user_has_usable_password(current_user)
+    if has_password:
+        if not data.password or not verify_password(data.password, current_user.password_hash):
+            log_auth_event(logger, "2FA_DISABLE", current_user.email, False, client_ip, "Invalid password", user_uuid=current_user.user_uuid)
+            raise InvalidCredentialsError(message="Incorrect password")
 
     method = current_user.two_factor_method or "totp"
 

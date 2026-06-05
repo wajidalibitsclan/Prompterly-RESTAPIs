@@ -50,6 +50,36 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(pre_hashed, hashed_password)
 
 
+def oauth_placeholder_password(provider: str, provider_user_id: str) -> str:
+    """
+    Synthetic password assigned to accounts created purely via an OAuth
+    provider. These users never chose a password, so we store a hash of this
+    deterministic placeholder. `user_has_usable_password` uses the same format
+    to recognise that the user has no real password — keep the two in sync.
+    """
+    return f"{provider}_oauth_{provider_user_id}"
+
+
+def user_has_usable_password(user) -> bool:
+    """
+    True if the user set a real password; False if the account only carries the
+    synthetic OAuth placeholder (i.e. signed up with "Continue with Google" and
+    never set a password).
+
+    Detected by reconstructing the placeholder from each linked OAuth account
+    and checking it against the stored hash. Once the user sets a real password
+    the placeholder no longer matches, so this flips to True automatically.
+    """
+    if not user.password_hash:
+        return False
+    for acc in getattr(user, "oauth_accounts", None) or []:
+        provider = getattr(acc.provider, "value", acc.provider)
+        placeholder = oauth_placeholder_password(provider, acc.provider_user_id)
+        if verify_password(placeholder, user.password_hash):
+            return False
+    return True
+
+
 def create_access_token(
     data: Dict[str, Any],
     expires_delta: Optional[timedelta] = None
