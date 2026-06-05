@@ -1697,11 +1697,16 @@ async def get_2fa_status(
     Includes the selected `two_factor_method` so the UI can render the
     correct badge ("Authenticator app" vs "Email") and pre-select the
     right option if the user starts a re-enrolment.
+
+    `has_password` tells the UI whether to ask for a password when disabling
+    2FA — OAuth-only accounts ("Continue with Google") have none, so the UI
+    hides that field and disable is gated on the second-factor code alone.
     """
     return {
         "is_2fa_enabled": current_user.is_2fa_enabled,
         "two_factor_method": current_user.two_factor_method
             or ("totp" if current_user.is_2fa_enabled and current_user.totp_secret else None),
+        "has_password": user_has_usable_password(current_user),
     }
 
 
