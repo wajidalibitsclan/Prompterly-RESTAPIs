@@ -356,6 +356,22 @@ async def verify_lounge_checkout_session(
     """
     from app.db.models.lounge import Lounge, LoungeMembership, MembershipRole
     from app.db.models.billing import SubscriptionStatus, LoungePlanType
+    from datetime import datetime
+
+    def _period_dates(stripe_sub, plan_type):
+        """Extract (start, end) timestamps across old/new Stripe API shapes."""
+        start = end = None
+        if getattr(stripe_sub, 'current_period', None):
+            start = stripe_sub.current_period.get('start')
+            end = stripe_sub.current_period.get('end')
+        if not start:
+            start = stripe_sub.get('current_period_start')
+            end = stripe_sub.get('current_period_end')
+        if not start:
+            start = now_naive().timestamp()
+            days = 365 if plan_type == LoungePlanType.YEARLY else 30
+            end = (now_naive() + timedelta(days=days)).timestamp()
+        return start, end
 
     try:
         # Retrieve session from Stripe
@@ -391,8 +407,12 @@ async def verify_lounge_checkout_session(
         if not existing_sub and session.subscription:
             # Create subscription record (webhook didn't fire)
             stripe_sub = stripe.Subscription.retrieve(session.subscription)
-            price_id = stripe_sub['items']['data'][0]['price']['id']
+            try:
+                price_id = stripe_sub['items']['data'][0]['price']['id']
+            except (KeyError, IndexError):
+                price_id = None
             plan_type = LoungePlanType.MONTHLY if plan_type_str == 'monthly' else LoungePlanType.YEARLY
+            period_start, period_end = _period_dates(stripe_sub, plan_type)
 
             lounge_subscription = LoungeSubscription(
                 user_id=user_id,
@@ -401,8 +421,8 @@ async def verify_lounge_checkout_session(
                 stripe_subscription_id=session.subscription,
                 stripe_price_id=price_id,
                 status=SubscriptionStatus.ACTIVE,
-                started_at=datetime.fromtimestamp(stripe_sub['current_period_start']),
-                renews_at=datetime.fromtimestamp(stripe_sub['current_period_end'])
+                started_at=datetime.fromtimestamp(period_start),
+                renews_at=datetime.fromtimestamp(period_end)
             )
             db.add(lounge_subscription)
             db.commit()
@@ -437,7 +457,9 @@ async def verify_lounge_checkout_session(
                     mentor_name = lounge.mentor.user.name if lounge.mentor and lounge.mentor.user else "Your Mentor"
                     price = "$25/month" if plan_type_str == "monthly" else "$240/year"
                     stripe_sub = stripe.Subscription.retrieve(session.subscription)
-                    next_billing = datetime.fromtimestamp(stripe_sub['current_period_end']).strftime("%B %d, %Y")
+                    plan_type = LoungePlanType.MONTHLY if plan_type_str == 'monthly' else LoungePlanType.YEARLY
+                    _, period_end = _period_dates(stripe_sub, plan_type)
+                    next_billing = datetime.fromtimestamp(period_end).strftime("%B %d, %Y")
 
                     background_tasks.add_task(
                         send_subscription_confirmation_email_sync,
