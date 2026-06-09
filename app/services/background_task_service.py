@@ -288,6 +288,67 @@ class BackgroundTaskService:
         finally:
             db.close()
 
+    async def process_document_full(
+        self,
+        db_session_factory,
+        job_id: int,
+        document_id: int
+    ):
+        """
+        Run the FULL document pipeline in the background: text extraction →
+        chunking → summary → embeddings. Used right after upload so the upload
+        request returns immediately.
+
+        Delegates the actual work to knowledge_base_service._process_document
+        (which records `processing_error` and sets `is_processed` on success),
+        then reflects that outcome onto the job.
+        """
+        # Imported lazily to avoid a circular import at module load.
+        from app.services.knowledge_base_service import knowledge_base_service
+
+        db = db_session_factory()
+        try:
+            job = self.get_job(db, job_id)
+            if not job:
+                return
+
+            job.mark_processing()
+            job.current_step = "Extracting text and generating embeddings…"
+            db.commit()
+
+            document = db.query(KBDocument).filter(KBDocument.id == document_id).first()
+            if not document:
+                job.mark_failed("Document not found")
+                db.commit()
+                return
+
+            await knowledge_base_service._process_document(db, document)
+            db.refresh(document)
+
+            if document.is_processed and not document.processing_error:
+                chunk_count = db.query(KBDocumentChunk).filter(
+                    KBDocumentChunk.document_id == document_id
+                ).count()
+                job.mark_completed({
+                    "document_id": document_id,
+                    "chunks_processed": chunk_count,
+                })
+            else:
+                job.mark_failed(document.processing_error or "Document processing failed")
+            db.commit()
+
+        except Exception as e:
+            logger.error(f"Error processing document {document_id}: {e}")
+            try:
+                job = self.get_job(db, job_id)
+                if job:
+                    job.mark_failed(str(e))
+                    db.commit()
+            except Exception:
+                pass
+        finally:
+            db.close()
+
     async def process_faq_embedding(
         self,
         db_session_factory,
@@ -363,7 +424,8 @@ class BackgroundTaskService:
         if job_type == JobType.PROMPT_EMBEDDING:
             coro = self.process_prompt_embedding(db_session_factory, job_id, entity_id)
         elif job_type == JobType.DOCUMENT_PROCESSING:
-            coro = self.process_document_embeddings(db_session_factory, job_id, entity_id)
+            # Full pipeline (extract → chunk → summarise → embed), run after upload.
+            coro = self.process_document_full(db_session_factory, job_id, entity_id)
         elif job_type == JobType.FAQ_EMBEDDING:
             coro = self.process_faq_embedding(db_session_factory, job_id, entity_id)
         else:

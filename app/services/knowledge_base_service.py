@@ -256,6 +256,9 @@ class KnowledgeBaseService:
             title=data.get('title', file.filename),
             description=data.get('description'),
             category_id=data.get('category_id'),
+            # Assign to the lounge so it (and its mentor, derived from the
+            # lounge) is scoped correctly — NULL means a global document.
+            lounge_id=data.get('lounge_id'),
             tags=data.get('tags'),
             file_id=file_record.id,
             original_filename=file.filename,
@@ -267,10 +270,10 @@ class KnowledgeBaseService:
         db.commit()
         db.refresh(document)
 
-        # Process document in background (text extraction, chunking, embeddings)
-        # For now, we'll do it synchronously - in production use Celery
-        await self._process_document(db, document)
-
+        # NOTE: heavy processing (text extraction, chunking, summary,
+        # embeddings) is intentionally NOT done here — the upload endpoint
+        # kicks it off as a background job so the request returns immediately.
+        # `is_processed` stays False until the job finishes.
         return document
 
     async def _process_document(self, db: Session, document: KBDocument) -> None:

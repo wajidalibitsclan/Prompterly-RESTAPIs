@@ -180,6 +180,9 @@ class KBDocumentResponse(BaseModel):
     mentor_image: Optional[str] = None  # Mentor profile image URL
     created_by_name: Optional[str] = None
     download_url: Optional[str] = None
+    # Set on upload — the background processing job. The FE polls
+    # /knowledge-base/jobs/{id} for progress while is_processed is False.
+    job_id: Optional[int] = None
 
     class Config:
         from_attributes = True

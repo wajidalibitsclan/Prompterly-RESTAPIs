@@ -577,6 +577,27 @@ async def upload_document(
     )
     db.refresh(document)  # Refresh to get lounge relationship
 
+    # Kick off processing (extract → chunk → summarise → embed) in the
+    # background so this request returns immediately. The document comes back
+    # with is_processed=False; the FE polls /knowledge-base/jobs/{job_id}.
+    from app.services.background_task_service import background_task_service
+    from app.db.models.background_job import JobType
+    from app.db.session import SessionLocal
+
+    job = background_task_service.create_job(
+        db=db,
+        job_type=JobType.DOCUMENT_PROCESSING,
+        entity_type="document",
+        entity_id=document.id,
+        created_by_id=admin_user.id,
+    )
+    background_task_service.start_background_task(
+        db_session_factory=SessionLocal,
+        job_id=job.id,
+        job_type=JobType.DOCUMENT_PROCESSING,
+        entity_id=document.id,
+    )
+
     lounge_image = await get_lounge_image(document, db)
     return KBDocumentResponse(
         id=document.id,
@@ -601,7 +622,8 @@ async def upload_document(
         lounge_image=lounge_image,
         mentor_name=get_mentor_name(document),
         mentor_image=get_mentor_image(document),
-        created_by_name=admin_user.name
+        created_by_name=admin_user.name,
+        job_id=job.id,
     )
 
 
