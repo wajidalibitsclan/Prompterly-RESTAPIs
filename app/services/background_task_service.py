@@ -6,7 +6,8 @@ import logging
 import re
 from html.parser import HTMLParser
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+from app.core.timezone import now_naive
 from sqlalchemy.orm import Session
 
 from app.db.models.background_job import BackgroundJob, JobStatus, JobType
@@ -307,11 +308,13 @@ class BackgroundTaskService:
         (which records `processing_error` and sets `is_processed` on success),
         then reflects that outcome onto the job.
         """
-        # Imported lazily to avoid a circular import at module load.
-        from app.services.knowledge_base_service import knowledge_base_service
-
         db = db_session_factory()
         try:
+            # Imported inside the try (lazy, and so an import failure marks the
+            # job FAILED instead of silently killing the task and leaving the
+            # job stuck at PENDING forever).
+            from app.services.knowledge_base_service import knowledge_base_service
+
             job = self.get_job(db, job_id)
             if not job:
                 return
@@ -352,6 +355,66 @@ class BackgroundTaskService:
                 pass
         finally:
             db.close()
+
+    async def recover_stuck_documents(
+        self,
+        db_session_factory,
+        older_than_minutes: int = 2,
+    ) -> int:
+        """
+        Re-process documents left unprocessed by a crash/restart.
+
+        The in-process upload task (asyncio) does not survive a process restart,
+        so a document uploaded just before a redeploy can be orphaned at
+        `is_processed=False` forever. This sweep finds such documents (not
+        permanently failed) and runs the full pipeline again. `_process_document`
+        is idempotent, so re-running is safe.
+
+        Run on startup and/or periodically via a cron worker. Returns the number
+        of documents re-processed.
+        """
+        db = db_session_factory()
+        try:
+            cutoff = now_naive() - timedelta(minutes=older_than_minutes)
+            ids = [
+                r[0] for r in db.query(KBDocument.id).filter(
+                    KBDocument.is_processed == False,  # noqa: E712
+                    KBDocument.processing_error.is_(None),
+                    KBDocument.created_at < cutoff,  # skip docs still mid-upload
+                ).all()
+            ]
+        finally:
+            db.close()
+
+        if not ids:
+            return 0
+
+        logger.info(f"KB recovery: re-processing {len(ids)} unprocessed document(s): {ids}")
+        for did in ids:
+            # Reuse an existing pending/processing job if present, else create one.
+            jdb = db_session_factory()
+            try:
+                job = jdb.query(BackgroundJob).filter(
+                    BackgroundJob.entity_type == "document",
+                    BackgroundJob.entity_id == did,
+                    BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.PROCESSING]),
+                ).order_by(BackgroundJob.id.desc()).first()
+                if not job:
+                    job = self.create_job(
+                        db=jdb,
+                        job_type=JobType.DOCUMENT_PROCESSING,
+                        entity_type="document",
+                        entity_id=did,
+                    )
+                job_id = job.id
+            finally:
+                jdb.close()
+
+            # Process sequentially so recovery doesn't fire a burst of embedding
+            # calls all at once.
+            await self.process_document_full(db_session_factory, job_id, did)
+
+        return len(ids)
 
     async def process_faq_embedding(
         self,

@@ -286,8 +286,21 @@ class KnowledgeBaseService:
         return document
 
     async def _process_document(self, db: Session, document: KBDocument) -> None:
-        """Process document: extract text, generate summary, create chunks"""
+        """Process document: extract text, generate summary, create chunks.
+
+        Idempotent — safe to re-run (e.g. recovery after a crash). Any chunks
+        from a previous partial run are cleared first so re-processing can't
+        create duplicates.
+        """
         try:
+            # Clear any chunks left by a previous (partial) run so a retry is
+            # idempotent and never duplicates chunks.
+            db.query(KBDocumentChunk).filter(
+                KBDocumentChunk.document_id == document.id
+            ).delete(synchronize_session=False)
+            document.processing_error = None
+            db.commit()
+
             # Text extraction based on file type
             extracted_text = await self._extract_text_from_document(db, document)
 

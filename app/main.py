@@ -92,6 +92,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Sentry initialization failed: {e}")
 
+    # Recover any knowledge-base documents left unprocessed by a previous
+    # crash/restart (their in-process upload task didn't survive). Runs in the
+    # background so it doesn't delay accepting traffic; idempotent.
+    try:
+        import asyncio
+        from app.services.background_task_service import background_task_service
+        from app.db.session import SessionLocal
+        asyncio.create_task(
+            background_task_service.recover_stuck_documents(SessionLocal)
+        )
+        logger.info("Scheduled knowledge-base document recovery sweep")
+    except Exception as e:
+        logger.warning(f"Could not schedule KB document recovery: {e}")
+
     logger.info("API startup complete - Ready to accept requests")
 
     yield
