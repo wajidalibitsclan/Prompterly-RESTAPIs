@@ -24,7 +24,7 @@ from app.db.models.billing import (
 from sqlalchemy.exc import IntegrityError
 from app.services import audit_log_service as audit_log
 from app.services.audit_log_service import AuditAction
-from datetime import timedelta
+from datetime import datetime, timedelta
 from app.services.email_service import (
     send_subscription_confirmation_email_sync,
     send_subscription_cancelled_sync,
