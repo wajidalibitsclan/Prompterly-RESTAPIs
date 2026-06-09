@@ -11,7 +11,7 @@ from typing import List, Optional
 import json
 
 from app.db.session import get_db
-from app.core.jwt import get_current_active_paying_user
+from app.core.jwt import get_current_active_paying_user, get_current_active_user
 from app.core.encryption import decrypt_content
 from app.db.models.user import User
 from app.db.models.chat import ChatThread, ChatMessage
@@ -407,6 +407,26 @@ async def update_thread_support_style(
         "support_style": thread.support_style,
         "support_style_version_id": thread.support_style_version_id,
     }
+
+
+@router.post("/threads/archive-all")
+async def archive_all_threads(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Archive all of the current user's chat threads (Data & Privacy)."""
+    count = await chat_service.archive_all_threads(user_id=current_user.id, db=db)
+    return {"archived": count}
+
+
+@router.post("/threads/delete-all")
+async def delete_all_threads(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Permanently delete all of the current user's chat threads and messages."""
+    count = await chat_service.delete_all_threads(user_id=current_user.id, db=db)
+    return {"deleted": count}
 
 
 @router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)

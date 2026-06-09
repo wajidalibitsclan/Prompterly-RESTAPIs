@@ -242,6 +242,16 @@ async def update_note(
         )
 
 
+@router.post("/delete-all")
+async def delete_all_notes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Permanently delete all of the current user's notebook entries (Data & Privacy)."""
+    count = await note_service.delete_all_notes(user_id=current_user.id, db=db)
+    return {"deleted": count}
+
+
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(
     note_id: int,
@@ -584,6 +594,16 @@ async def update_capsule(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+
+@router.post("/capsules/delete-all")
+async def delete_all_capsules(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Permanently delete all of the current user's time capsule messages (Data & Privacy)."""
+    count = await note_service.delete_all_capsules(user_id=current_user.id, db=db)
+    return {"deleted": count}
 
 
 @router.delete("/capsules/{capsule_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -45,7 +45,9 @@ class KBPrompt(Base):
     lounge_id = Column(Integer, ForeignKey("lounges.id", ondelete="CASCADE"), nullable=True, index=True)
     category_id = Column(Integer, ForeignKey("kb_categories.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
+    # MEDIUMTEXT (~16MB) so long prompts don't overflow TEXT's 64KB limit.
+    # SQLAlchemy renders Text(length) as MEDIUMTEXT on MySQL — see migration 031.
+    content = Column(Text(length=16_777_215), nullable=False)
     description = Column(Text, nullable=True)
     tags = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

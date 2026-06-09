@@ -1256,31 +1256,52 @@ async def list_invoices(
     limit: int = 20
 ):
     """
-    List invoices
+    List invoices (billing history).
 
-    - Returns Stripe invoices for user
+    Listed by Stripe CUSTOMER so the history covers EVERY subscription the user
+    has — platform membership AND every lounge subscription — not just one.
+    (The previous version only looked at the platform `subscriptions` table,
+    which is empty for lounge-only subscribers, so it always returned [].)
+
     - Includes download URLs
     """
     try:
-        subscription = await billing_service.get_user_subscription(
-            user_id=current_user.id,
-            db=db
-        )
+        customer_id = current_user.stripe_customer_id
 
-        if not subscription or not subscription.stripe_subscription_id:
+        # Backfill: older accounts may have paid (a lounge/platform subscription
+        # exists) without stripe_customer_id persisted on the user row. Derive
+        # the customer from a subscription via Stripe and store it.
+        if not customer_id:
+            stripe_sub_id = None
+            lounge_sub = db.query(LoungeSubscription).filter(
+                LoungeSubscription.user_id == current_user.id,
+                LoungeSubscription.stripe_subscription_id.isnot(None),
+            ).order_by(LoungeSubscription.id.desc()).first()
+            if lounge_sub:
+                stripe_sub_id = lounge_sub.stripe_subscription_id
+            else:
+                platform_sub = await billing_service.get_user_subscription(
+                    user_id=current_user.id, db=db
+                )
+                if platform_sub:
+                    stripe_sub_id = platform_sub.stripe_subscription_id
+
+            if stripe_sub_id and stripe_sub_id.startswith("sub_") and len(stripe_sub_id) >= 20:
+                try:
+                    stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
+                    customer_id = stripe_sub.customer
+                    current_user.stripe_customer_id = customer_id
+                    db.commit()
+                except stripe.error.StripeError as e:
+                    logger.warning(f"Could not derive Stripe customer from {stripe_sub_id}: {e}")
+
+        if not customer_id:
+            # User has never paid (no Stripe customer) — empty history.
             return []
 
-        # Check if the subscription ID looks like a real Stripe subscription ID
-        # Real Stripe subscription IDs start with "sub_" followed by alphanumeric characters
-        stripe_sub_id = subscription.stripe_subscription_id
-        if not stripe_sub_id.startswith("sub_") or len(stripe_sub_id) < 20:
-            # This is likely a placeholder/test subscription ID, return empty
-            logger.info(f"Subscription ID {stripe_sub_id} appears to be a placeholder, skipping invoice fetch")
-            return []
-
-        # Get invoices from Stripe
+        # Get all invoices for this customer from Stripe.
         invoices = stripe.Invoice.list(
-            subscription=stripe_sub_id,
+            customer=customer_id,
             limit=limit
         )
 

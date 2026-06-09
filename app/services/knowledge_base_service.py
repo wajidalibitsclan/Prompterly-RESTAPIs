@@ -17,6 +17,13 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Max characters fed to the embedding model in a single call. text-embedding-3
+# accepts ~8191 tokens (~32k chars); we stay conservatively under that so a very
+# long prompt/FAQ still gets a (truncated) embedding instead of failing the call.
+# Note: prompts are also injected verbatim as directives, so a truncated
+# embedding only affects similarity ranking, not what the AI is told.
+EMBEDDING_INPUT_CHAR_LIMIT = 30_000
+
 
 class KnowledgeBaseService:
     """Service for Knowledge Base operations"""
@@ -128,7 +135,9 @@ class KnowledgeBaseService:
             if prompt.description:
                 text += f"\n{prompt.description}"
 
-            embedding = await ai_service.create_embedding(text)
+            embedding = await ai_service.create_embedding(
+                text[:EMBEDDING_INPUT_CHAR_LIMIT]
+            )
             prompt.embedding = embedding
             prompt.embedding_model = settings.OPENAI_EMBEDDING_MODEL
             db.commit()

@@ -54,10 +54,21 @@ class KBCategoryResponse(KBCategoryBase):
 
 # ============== Prompt Schemas ==============
 
+# Upper bound for prompt content. Well within the MEDIUMTEXT column (~16MB)
+# even for multi-byte characters, and large enough for any realistic prompt
+# (~16k words). Exceeding it returns a clear 422 instead of a DB error.
+MAX_PROMPT_CONTENT_CHARS = 100_000
+
+
 class KBPromptBase(BaseModel):
     """Base schema for KB prompt"""
     title: str = Field(..., min_length=1, max_length=255)
-    content: str = Field(..., min_length=1)
+    content: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PROMPT_CONTENT_CHARS,
+        description=f"Prompt text (max {MAX_PROMPT_CONTENT_CHARS:,} characters)",
+    )
     description: Optional[str] = None
     tags: Optional[List[str]] = None
     is_active: bool = True
@@ -83,7 +94,9 @@ class KBPromptCreate(KBPromptBase):
 class KBPromptUpdate(BaseModel):
     """Schema for updating a KB prompt"""
     title: Optional[str] = Field(None, min_length=1, max_length=255)
-    content: Optional[str] = Field(None, min_length=1)
+    content: Optional[str] = Field(
+        None, min_length=1, max_length=MAX_PROMPT_CONTENT_CHARS
+    )
     description: Optional[str] = None
     tags: Optional[List[str]] = None
     is_active: Optional[bool] = None

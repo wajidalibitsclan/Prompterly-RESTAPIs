@@ -897,6 +897,46 @@ Communication Style:
         
         return thread
     
+    async def archive_all_threads(self, user_id: int, db: Session) -> int:
+        """
+        Archive every non-archived thread for the user (Data & Privacy).
+
+        Returns the number of threads archived.
+        """
+        updated = db.query(ChatThread).filter(
+            ChatThread.user_id == user_id,
+            ChatThread.status != ThreadStatus.ARCHIVED,
+        ).update(
+            {ChatThread.status: ThreadStatus.ARCHIVED},
+            synchronize_session=False,
+        )
+        db.commit()
+        return updated
+
+    async def delete_all_threads(self, user_id: int, db: Session) -> int:
+        """
+        Hard-delete every thread (and its messages) for the user.
+
+        Messages are deleted first because the chat_messages → chat_threads FK
+        has no DB-level cascade (the ORM cascade doesn't apply to bulk deletes).
+        Returns the number of threads deleted.
+        """
+        thread_ids = [
+            tid for (tid,) in
+            db.query(ChatThread.id).filter(ChatThread.user_id == user_id).all()
+        ]
+        if not thread_ids:
+            return 0
+
+        db.query(ChatMessage).filter(
+            ChatMessage.thread_id.in_(thread_ids)
+        ).delete(synchronize_session=False)
+        deleted = db.query(ChatThread).filter(
+            ChatThread.id.in_(thread_ids)
+        ).delete(synchronize_session=False)
+        db.commit()
+        return deleted
+
     async def delete_thread(
         self,
         thread_id: int,

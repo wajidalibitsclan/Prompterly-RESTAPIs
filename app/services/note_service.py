@@ -258,6 +258,22 @@ class NoteService:
         
         return query.order_by(Note.updated_at.desc()).all()
     
+    async def delete_all_notes(self, user_id: int, db: Session) -> int:
+        """Hard-delete every note for the user (Data & Privacy). Returns count."""
+        deleted = db.query(Note).filter(
+            Note.user_id == user_id
+        ).delete(synchronize_session=False)
+        db.commit()
+        return deleted
+
+    async def delete_all_capsules(self, user_id: int, db: Session) -> int:
+        """Hard-delete every time capsule for the user. Returns count."""
+        deleted = db.query(TimeCapsule).filter(
+            TimeCapsule.user_id == user_id
+        ).delete(synchronize_session=False)
+        db.commit()
+        return deleted
+
     async def delete_note(
         self,
         note_id: int,

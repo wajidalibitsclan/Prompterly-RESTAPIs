@@ -170,11 +170,15 @@ class BackgroundTaskService:
                 clean_description = strip_html_tags(prompt.description)
                 text += f"\n{clean_description}"
 
-            # Step 2: Generate embedding
+            # Step 2: Generate embedding (cap input so a very long prompt
+            # doesn't exceed the embedding model's token limit and fail).
             job.update_progress(2, 3, "Generating embedding vector...")
             db.commit()
 
-            embedding = await ai_service.create_embedding(text)
+            from app.services.knowledge_base_service import EMBEDDING_INPUT_CHAR_LIMIT
+            embedding = await ai_service.create_embedding(
+                text[:EMBEDDING_INPUT_CHAR_LIMIT]
+            )
 
             # Step 3: Store embedding
             job.update_progress(3, 3, "Storing embedding...")
