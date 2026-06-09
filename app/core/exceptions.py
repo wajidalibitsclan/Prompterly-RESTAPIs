@@ -153,6 +153,20 @@ class MentorNotApprovedError(AuthorizationError):
         )
 
 
+class MentorLoginUnavailableError(AuthorizationError):
+    """
+    Mentor accounts are blocked from signing in while the mentor dashboard
+    is unavailable. Prevents a mentor from falling through to the member
+    dashboard.
+    """
+
+    def __init__(self):
+        super().__init__(
+            message="Mentor dashboard is not available right now.",
+            error_code="MENTOR_LOGIN_UNAVAILABLE"
+        )
+
+
 # =============================================================================
 # Validation Exceptions
 # =============================================================================

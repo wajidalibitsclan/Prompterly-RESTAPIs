@@ -44,7 +44,8 @@ from app.core.exceptions import (
     EmailAlreadyExistsError,
     UserNotFoundError,
     GoogleOAuthError,
-    AccountInactiveError
+    AccountInactiveError,
+    MentorLoginUnavailableError
 )
 from app.core.logging import get_logger, log_auth_event
 from app.services import audit_log_service as audit_log
@@ -416,6 +417,17 @@ async def login(
         log_auth_event(logger, "LOGIN", form_data.username, False, client_ip, "Account inactive", user_uuid=user.user_uuid)
         raise AccountInactiveError()
 
+    # Mentors are not allowed to sign in while the mentor dashboard is
+    # unavailable — without this they fall through to the member dashboard.
+    # Checked before any token (temp or full) is issued.
+    if user.role == UserRole.MENTOR:
+        log_auth_event(logger, "LOGIN", form_data.username, False, client_ip, "Mentor login blocked", user_uuid=user.user_uuid)
+        audit_log.record(
+            AuditAction.LOGIN_FAILED, actor=user, request=request,
+            audit_metadata={"reason": "mentor_login_blocked"},
+        )
+        raise MentorLoginUnavailableError()
+
     # If 2FA is enabled, return a temporary token and require a second-factor
     # verification. For email-method users we also issue + send a fresh OTP
     # right here so the inbox has the code by the time the UI loads.
@@ -526,6 +538,12 @@ async def refresh_token(
     if not user:
         logger.warning(f"Token refresh for non-existent user ID: {user_id}")
         raise UserNotFoundError()
+
+    # Mentors are blocked from signing in — also refuse to refresh any token
+    # they may still hold from before the block was in place.
+    if user.role == UserRole.MENTOR:
+        logger.warning(f"Token refresh blocked for mentor: {user.email} (ID: {user.id})")
+        raise MentorLoginUnavailableError()
 
     # Create new tokens (sub must be a string per JWT spec).
     # Preserve `mfa_verified` so an MFA-established session stays MFA-verified
@@ -933,6 +951,12 @@ async def google_callback(
         db.add(oauth_account)
 
     db.commit()
+
+    # Mentors are not allowed to sign in while the mentor dashboard is
+    # unavailable — block before issuing any tokens (same as password login).
+    if user.role == UserRole.MENTOR:
+        log_auth_event(logger, "GOOGLE_LOGIN", user.email, False, client_ip, "Mentor login blocked", user_uuid=user.user_uuid)
+        raise MentorLoginUnavailableError()
 
     # Create JWT tokens (sub must be a string per JWT spec)
     jwt_access_token = create_access_token(data={"sub": str(user.id)})
@@ -1604,6 +1628,12 @@ async def verify_2fa(
 
     if not user:
         raise UserNotFoundError()
+
+    # Defense in depth — /login already blocks mentors before issuing a temp
+    # token, but reject here too so this path can never mint full tokens.
+    if user.role == UserRole.MENTOR:
+        log_auth_event(logger, "2FA_VERIFY", user.email, False, client_ip, "Mentor login blocked", user_uuid=user.user_uuid)
+        raise MentorLoginUnavailableError()
 
     if not user.is_2fa_enabled:
         raise InvalidTokenError(

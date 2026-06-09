@@ -417,10 +417,21 @@ class KnowledgeBaseService:
 
         return chunks
 
+    # Chunks are embedded in batches so a large document doesn't exceed the
+    # embedding API's per-request input limit, and a transient failure only
+    # affects one batch rather than silently losing the whole document.
+    EMBEDDING_BATCH_SIZE = 100
+
     async def _generate_chunk_embeddings(
         self, db: Session, document: KBDocument
     ) -> None:
-        """Generate embeddings for all chunks of a document"""
+        """
+        Generate embeddings for all chunks of a document.
+
+        Raises on failure (does NOT swallow) so the caller can record the
+        error and avoid marking the document as successfully processed when
+        its content is not actually searchable by the AI.
+        """
         chunks = db.query(KBDocumentChunk).filter(
             KBDocumentChunk.document_id == document.id
         ).all()
@@ -428,36 +439,41 @@ class KnowledgeBaseService:
         if not chunks:
             return
 
-        try:
-            # Batch generate embeddings
-            texts = [chunk.content for chunk in chunks]
+        for start in range(0, len(chunks), self.EMBEDDING_BATCH_SIZE):
+            batch = chunks[start:start + self.EMBEDDING_BATCH_SIZE]
+            texts = [chunk.content for chunk in batch]
             embeddings = await ai_service.create_embeddings_batch(texts)
 
-            for chunk, embedding in zip(chunks, embeddings):
+            if len(embeddings) != len(batch):
+                raise ValueError(
+                    f"Embedding count mismatch for document {document.id}: "
+                    f"got {len(embeddings)} embeddings for {len(batch)} chunks"
+                )
+
+            for chunk, embedding in zip(batch, embeddings):
                 chunk.embedding = embedding
                 chunk.embedding_model = settings.OPENAI_EMBEDDING_MODEL
 
             db.commit()
-        except Exception as e:
-            logger.error(f"Error generating chunk embeddings: {e}")
 
     async def _update_document_embedding(
         self, db: Session, document: KBDocument
     ) -> None:
-        """Generate document-level embedding"""
-        try:
-            text = f"{document.title}\n"
-            if document.description:
-                text += f"{document.description}\n"
-            if document.summary:
-                text += document.summary
+        """
+        Generate the document-level embedding.
 
-            embedding = await ai_service.create_embedding(text)
-            document.embedding = embedding
-            document.embedding_model = settings.OPENAI_EMBEDDING_MODEL
-            db.commit()
-        except Exception as e:
-            logger.error(f"Error generating document embedding: {e}")
+        Raises on failure (does NOT swallow) — see `_generate_chunk_embeddings`.
+        """
+        text = f"{document.title}\n"
+        if document.description:
+            text += f"{document.description}\n"
+        if document.summary:
+            text += document.summary
+
+        embedding = await ai_service.create_embedding(text)
+        document.embedding = embedding
+        document.embedding_model = settings.OPENAI_EMBEDDING_MODEL
+        db.commit()
 
     async def get_documents_paginated(
         self,
@@ -880,6 +896,53 @@ class KnowledgeBaseService:
 
         return results
 
+    def get_prompt_directives(
+        self,
+        db: Session,
+        lounge_id: Optional[int] = None,
+        include_global: bool = True,
+    ) -> Optional[str]:
+        """
+        Return operator-authored prompt instructions/rules that must ALWAYS be
+        applied to the conversation, verbatim and in full.
+
+        Unlike documents and FAQs, prompts are NOT retrieved by similarity:
+        rules such as "always do X" / "never do Y" rarely resemble the user's
+        message, so a similarity search would almost never surface them and the
+        rule would silently never fire. These are returned in full (no preview
+        truncation) so the AI receives every rule.
+
+        Includes both lounge-specific prompts and global prompts (lounge_id
+        NULL) by default — a global rule is meant to apply everywhere.
+        """
+        q = db.query(KBPrompt).filter(
+            KBPrompt.is_active == True,
+            KBPrompt.is_included_in_rag == True,
+        )
+
+        if lounge_id is not None:
+            if include_global:
+                q = q.filter(
+                    or_(KBPrompt.lounge_id == lounge_id, KBPrompt.lounge_id.is_(None))
+                )
+            else:
+                q = q.filter(KBPrompt.lounge_id == lounge_id)
+        elif not include_global:
+            q = q.filter(KBPrompt.lounge_id.is_(None))
+
+        prompts = q.order_by(KBPrompt.id.asc()).all()
+        if not prompts:
+            return None
+
+        parts = []
+        for p in prompts:
+            content = (p.content or "").strip()
+            if not content:
+                continue
+            parts.append(f"## {p.title}\n{content}")
+
+        return "\n\n".join(parts) if parts else None
+
     async def get_rag_context(
         self,
         db: Session,
@@ -986,9 +1049,16 @@ class KnowledgeBaseService:
                 KBDocument.is_processed == True
             ).all()
             for doc in documents:
-                await self._generate_chunk_embeddings(db, doc)
-                await self._update_document_embedding(db, doc)
-                results["documents"] += 1
+                # Keep going if one document fails so a single bad document
+                # doesn't abort the whole regeneration; the per-method calls
+                # now raise on failure.
+                try:
+                    await self._generate_chunk_embeddings(db, doc)
+                    await self._update_document_embedding(db, doc)
+                    results["documents"] += 1
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Error regenerating embeddings for document {doc.id}: {e}")
 
         if not entity_type or entity_type == "faqs":
             faqs = db.query(KBFaq).filter(
